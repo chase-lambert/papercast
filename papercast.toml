@@ -1,0 +1,24 @@
+# PaperCast example configuration.
+# Run: papercast run --config papercast.toml
+# The [eink] section hot-reloads: edit and save while running to tune live.
+
+[eink]
+contrast = 1.2          # >1 = punchier; e-ink wants more than LCD
+gamma = 1.0             # <1 brightens midtones
+black-point = 8         # input level crushed to ink
+white-point = 248       # input level lifted to paper
+invert = false          # true for dark desktop themes → black-on-paper
+sharpen = 1.0           # unsharp strength; 0 = off
+sharpen-radius = 1      # blur radius in px
+dither = "bayer"        # "none" | "bayer" | "floyd-steinberg"
+levels = 16             # EPD hardware gray levels
+fit = "letterbox"       # "letterbox" | "crop" | "stretch"
+# target-size = [3200, 2400]   # uncomment to scale for the Boox Tab X C
+
+[mirror]
+listen = "127.0.0.1:5900"
+fps = 15
+# output = "DP-1"       # monitor name from `papercast probe`; default: first
+tile-size = 64          # dirty-diff granularity
+full-refresh-secs = 60  # periodic ghost-clearing refresh; 0 = off
+full-refresh-updates = 0 # ...or after N incremental updates; 0 = off

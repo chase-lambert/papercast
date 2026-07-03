@@ -21,6 +21,8 @@ pub fn spawn(
     mut input: SourceHandle,
     config: EinkConfig,
     save_frame: Option<PathBuf>,
+    latency_stamp: bool,
+    mut config_rx: tokio::sync::watch::Receiver<EinkConfig>,
 ) -> SourceHandle {
     let pipeline = Pipeline::new(config);
     let (out_w, out_h) = pipeline.output_size((input.width, input.height));
@@ -33,16 +35,40 @@ pub fn spawn(
             let mut save_frame = save_frame;
             let mut frame_no: u64 = 0;
             let mut busy_total = std::time::Duration::ZERO;
+            let epoch = std::time::Instant::now();
 
             while let Some(frame) = input.frames.blocking_recv() {
+                // Hot reload: apply a pending config between frames. The
+                // output size is fixed at startup (the VNC framebuffer was
+                // sized from it), so a target-size edit is refused.
+                if config_rx.has_changed().unwrap_or(false) {
+                    let mut cfg = config_rx.borrow_and_update().clone();
+                    let fixed = pipeline.config().target_size;
+                    if cfg.target_size != fixed {
+                        warn!("target-size can't change at runtime; keeping {fixed:?}");
+                        cfg.target_size = fixed;
+                    }
+                    pipeline.set_config(cfg);
+                    info!("pipeline config reloaded");
+                }
+
                 let started = std::time::Instant::now();
-                let processed = match pipeline.process(&frame) {
+                let mut processed = match pipeline.process(&frame) {
                     Ok(p) => p,
                     Err(e) => {
                         error!("pipeline failed: {e}");
                         break;
                     }
                 };
+                if latency_stamp {
+                    let scale = (processed.width as usize / 160).clamp(2, 8);
+                    papercast_core::overlay::draw_ms_counter(
+                        &mut processed.data,
+                        processed.width as usize,
+                        epoch.elapsed().as_millis() as u64,
+                        scale,
+                    );
+                }
                 busy_total += started.elapsed();
                 frame_no += 1;
 

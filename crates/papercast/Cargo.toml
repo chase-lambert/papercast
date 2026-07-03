@@ -16,3 +16,6 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 rustvncserver.workspace = true
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "sync", "time", "signal"] }
 image = { version = "0.25.10", default-features = false, features = ["png"] }
+notify = "8.2.0"
+serde = { version = "1.0.228", features = ["derive"] }
+toml = "1.1.2"
