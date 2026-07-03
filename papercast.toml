@@ -10,7 +10,7 @@ white-point = 248       # input level lifted to paper
 invert = false          # true for dark desktop themes → black-on-paper
 sharpen = 1.0           # unsharp strength; 0 = off
 sharpen-radius = 1      # blur radius in px
-dither = "bayer"        # "none" | "bayer" | "floyd-steinberg"
+dither = "bayer"        # "none" | "bayer" | "floyd-steinberg" | "atkinson"
 levels = 16             # EPD hardware gray levels
 fit = "letterbox"       # "letterbox" | "crop" | "stretch"
 # target-size = [3200, 2400]   # uncomment to scale for the Boox Tab X C

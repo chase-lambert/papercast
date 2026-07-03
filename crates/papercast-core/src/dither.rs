@@ -18,6 +18,10 @@ pub enum DitherMode {
     /// Error diffusion: nicest stills, but serial and unstable across
     /// frames — small input changes ripple the whole dither pattern.
     FloydSteinberg,
+    /// Atkinson error diffusion: like Floyd–Steinberg but spreads only 6/8 of
+    /// the error to 6 neighbors. Deliberately losing 2/8 gives the light,
+    /// high-contrast look that reads crisply on e-ink for text/UI. Serial.
+    Atkinson,
 }
 
 /// Standard 8×8 Bayer threshold matrix, values 0..=63.
@@ -83,6 +87,7 @@ impl Quantizer {
                 }
             }
             DitherMode::FloydSteinberg => self.floyd_steinberg(buf, width),
+            DitherMode::Atkinson => self.atkinson(buf, width),
         }
     }
 
@@ -109,6 +114,42 @@ impl Quantizer {
             }
             std::mem::swap(&mut err_cur, &mut err_next);
             err_next.fill(0.0);
+        }
+    }
+
+    /// Atkinson error diffusion. Distributes 1/8 of each pixel's error to six
+    /// neighbors — (x+1,y), (x+2,y), (x−1,y+1), (x,y+1), (x+1,y+1), (x,y+2) —
+    /// leaving 2/8 undistributed. The two-row reach means three error rows.
+    fn atkinson(&self, buf: &mut [u8], width: usize) {
+        let height = buf.len() / width;
+        // Error carried to the current row and the next two rows.
+        let mut err0 = vec![0.0f32; width];
+        let mut err1 = vec![0.0f32; width];
+        let mut err2 = vec![0.0f32; width];
+        for y in 0..height {
+            for x in 0..width {
+                let i = y * width + x;
+                let v = (f32::from(buf[i]) + err0[x]).clamp(0.0, 255.0);
+                let q = self.lut[v as usize];
+                buf[i] = q;
+                let e = (v - f32::from(q)) / 8.0;
+                if x + 1 < width {
+                    err0[x + 1] += e;
+                    err1[x + 1] += e;
+                }
+                if x + 2 < width {
+                    err0[x + 2] += e;
+                }
+                if x >= 1 {
+                    err1[x - 1] += e;
+                }
+                err1[x] += e;
+                err2[x] += e;
+            }
+            // Advance a row: current ← y+1, y+1 ← y+2, y+2 ← fresh zeros.
+            std::mem::swap(&mut err0, &mut err1);
+            std::mem::swap(&mut err1, &mut err2);
+            err2.fill(0.0);
         }
     }
 }
@@ -157,6 +198,32 @@ mod tests {
         let whites = buf.iter().filter(|&&v| v == 255).count();
         // ~50% white: mid-gray becomes a checkerish mix, not a flat field.
         assert!((24..=40).contains(&whites), "whites={whites}");
+    }
+
+    #[test]
+    fn atkinson_matches_hand_computed_row() {
+        // Single row of mid-gray at the 2-level threshold. Hand-tracing the
+        // 1/8 diffusion (2/8 lost) flips the middle two pixels to black:
+        // x0: 128→255, err -15.875 to x1,x2
+        // x1: 112.1→0,  err +14.02 to x2,x3
+        // x2: 126.1→0,  err +15.77 to x3
+        // x3: 157.8→255
+        let q = Quantizer::new(2);
+        let mut buf = vec![128u8; 4];
+        q.quantize(&mut buf, 4, (0, 0), DitherMode::Atkinson);
+        assert_eq!(buf, [255, 0, 0, 255]);
+    }
+
+    #[test]
+    fn atkinson_outputs_only_representable_levels() {
+        let q = Quantizer::new(16);
+        let mut buf: Vec<u8> = (0..=255).collect();
+        q.quantize(&mut buf, 16, (0, 0), DitherMode::Atkinson);
+        let step = 255.0 / 15.0;
+        for &v in &buf {
+            let level = f32::from(v) / step;
+            assert!((level - level.round()).abs() < 0.01, "{v} is not on a level");
+        }
     }
 
     #[test]

@@ -137,6 +137,7 @@ pub enum DitherArg {
     None,
     Bayer,
     Fs,
+    Atkinson,
 }
 
 fn parse_size(s: &str) -> Result<(u32, u32), String> {
@@ -187,6 +188,7 @@ fn resolve(args: &RunArgs) -> anyhow::Result<Settings> {
             DitherArg::None => DitherMode::None,
             DitherArg::Bayer => DitherMode::Bayer,
             DitherArg::Fs => DitherMode::FloydSteinberg,
+            DitherArg::Atkinson => DitherMode::Atkinson,
         };
     }
     if let Some(v) = args.fit {

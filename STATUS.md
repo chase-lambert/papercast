@@ -77,7 +77,8 @@ Decisions locked in for Phase 1 (from design review):
 | Commit | Milestone |
 |---|---|
 | `482a957` | M5 + cleanup: MIT `LICENSE`, workspace `license = "MIT"` (vendored stays Apache-2.0), `docs/ROADMAP.md`, VENDORED.md parser-fix note, clippy-clean papercast crates |
-| _this_ | M6: mode presets + central `ModeState` manager (`crates/papercast/src/mode.rs`), `[modes.<name>]` config + `[mirror].mode`, `--mode` CLI, effective-settings wiring, serve-loop fps pacing, capture-fps rule |
+| `a94b181` | M6: mode presets + central `ModeState` manager (`crates/papercast/src/mode.rs`), `[modes.<name>]` config + `[mirror].mode`, `--mode` CLI, effective-settings wiring, serve-loop fps pacing, capture-fps rule |
+| _this_ | M8: `DitherMode::Atkinson` (error diffusion, 6/8 spread), `--dither atkinson` + `dither = "atkinson"`, hand-computed unit test |
 
 ### M6 notes / open items for M7
 
@@ -97,7 +98,10 @@ Decisions locked in for Phase 1 (from design review):
   `papercast ctl` (mode/refresh/status), and share one `ModeState` between the socket and
   the config watcher so both feed the same manager. The serve loop must then re-read
   fps/tile/refresh from the channel (currently read once at startup).
-- Modes are Bayer-only for now (M8 adds Atkinson; not yet any mode's default).
+- **M8 done, but Atkinson is NOT yet any mode's default** (design pt 8: visual-gate
+  first). It's opt-in via `dither = "atkinson"`. Before making it the `reading` default,
+  compare against Bayer with `--save-frame` PNGs and a live viewer check, then flip the
+  built-in `reading` overlay in `mode.rs`.
 
 ## After Phase 0 (backlog, see README roadmap)
 

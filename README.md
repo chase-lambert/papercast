@@ -130,7 +130,7 @@ is the one exception; it fixes the VNC framebuffer size at startup.)
 | `invert` | `false` | Flip luminance — dark desktop themes become black-on-paper |
 | `sharpen` | `1.0` | Unsharp-mask strength; `0` disables |
 | `sharpen-radius` | `1` | Unsharp blur radius (px) |
-| `dither` | `"bayer"` | `"none"`, `"bayer"` (ordered, stable), `"floyd-steinberg"` |
+| `dither` | `"bayer"` | `"none"`, `"bayer"` (ordered, stable), `"floyd-steinberg"`, `"atkinson"` |
 | `levels` | `16` | Gray levels to quantize to (match the panel) |
 | `fit` | `"letterbox"` | `"letterbox"`, `"crop"`, `"stretch"` when scaling changes shape |
 | `target-size` | source size | `[w, h]` output resolution, e.g. `[3200, 2400]` |
