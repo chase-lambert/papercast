@@ -6,3 +6,5 @@
 //! zcosmic_* → portal/PipeWire (contingency, separate backend).
 
 pub mod probe;
+pub mod source;
+pub mod test_pattern;

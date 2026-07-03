@@ -14,6 +14,8 @@ enum Command {
     /// Inspect the Wayland compositor: globals, outputs, shm formats, and
     /// which screen-capture protocols are available.
     Probe,
+    /// Serve a frame source as a VNC session.
+    Run(commands::run::RunArgs),
 }
 
 fn main() -> anyhow::Result<()> {
@@ -28,5 +30,6 @@ fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Command::Probe => commands::probe::run(),
+        Command::Run(args) => commands::run::run(args),
     }
 }
