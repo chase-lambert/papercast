@@ -585,12 +585,14 @@ impl VncClient {
                                 if buf.len() < 4 { // 1 + 1 padding + 2 count
                                     break;
                                 }
+                                let count = u16::from_be_bytes([buf[2], buf[3]]) as usize;
+                                let total_len = 4 + count * 4;
+                                if buf.len() < total_len {
+                                    break; // Need more data
+                                }
                                 buf.advance(1); // message type
                                 buf.advance(1); // padding
                                 let count = buf.get_u16() as usize;
-                                if buf.len() < count * 4 {
-                                    break; // Need more data
-                                }
                                 let mut encodings_list = Vec::with_capacity(count);
                                 for _ in 0..count {
                                     let encoding = buf.get_i32();
@@ -714,9 +716,8 @@ impl VncClient {
                                 if buf.len() < 8 { // 1 + 3 padding + 4 length
                                     break;
                                 }
-                                buf.advance(1); // message type
-                                buf.advance(3); // padding
-                                let length = buf.get_u32() as usize;
+                                let length =
+                                    u32::from_be_bytes([buf[4], buf[5], buf[6], buf[7]]) as usize;
 
                                 if length > MAX_CUT_TEXT {
                                     error!("Cut text too large: {length} bytes (max {MAX_CUT_TEXT}), disconnecting client");
@@ -727,9 +728,20 @@ impl VncClient {
                                     ));
                                 }
 
-                                if buf.len() < length {
+                                let Some(total_len) = 8usize.checked_add(length) else {
+                                    error!("Cut text length overflow, disconnecting client");
+                                    let _ = self.event_tx.send(ClientEvent::Disconnected);
+                                    return Err(std::io::Error::new(
+                                        std::io::ErrorKind::InvalidData,
+                                        "Cut text length overflow"
+                                    ));
+                                };
+                                if buf.len() < total_len {
                                     break; // Need more data
                                 }
+                                buf.advance(1); // message type
+                                buf.advance(3); // padding
+                                let length = buf.get_u32() as usize;
                                 let text_bytes = buf.split_to(length);
                                 if let Ok(text) = String::from_utf8(text_bytes.to_vec()) {
                                     let _ = self.event_tx.send(ClientEvent::CutText { text });

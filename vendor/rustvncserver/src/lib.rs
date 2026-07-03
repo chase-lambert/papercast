@@ -64,7 +64,7 @@
 //!     });
 //!
 //!     // Start listening on port 5900 (blocks until server stops)
-//!     server.listen(5900).await?;
+//!     server.listen("127.0.0.1:5900").await?;
 //!     Ok(())
 //! }
 //! ```

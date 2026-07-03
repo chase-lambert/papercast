@@ -165,7 +165,8 @@ impl Pipeline {
             format: PixelFormat::Gray8,
             data: buf.clone(),
             // Source damage is in source coordinates; once scaled it no
-            // longer applies. M3 transforms it instead of dropping it.
+            // longer applies. The current VNC path does its own tile diff
+            // over the processed frame.
             damage: if needs_scale { None } else { frame.damage.clone() },
         })
     }

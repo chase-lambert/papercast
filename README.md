@@ -41,6 +41,9 @@ $ flatpak install --user flathub org.tigervnc.vncviewer
 $ flatpak run org.tigervnc.vncviewer 127.0.0.1:5900
 ```
 
+Remmina is not required for Phase 0. Its Flatpak pulls the GNOME runtime, which is normal
+for Flatpak but unnecessary if TigerVNC is available.
+
 You should see a grayscale, dithered mirror of the chosen output. Don't point the viewer
 at the same monitor you're capturing, or you get an infinite tunnel.
 
@@ -148,8 +151,8 @@ ZRLE.
 | Viewer | Platform | Status | Notes |
 |---|---|---|---|
 | AVNC | Android | untested (no tablet yet) | Recommended receiver; FOSS |
-| TigerVNC (`vncviewer`) | desktop | untested | primary desktop test target |
-| Remmina | desktop | untested | GTK; uses gtk-vnc/FreeRDP backends |
+| TigerVNC (`vncviewer`) | desktop | **verified** | Flatpak `org.tigervnc.vncviewer` 1.14.0; RFB 3.8, security None, continuous updates, Tight encoding |
+| Remmina | desktop | untested / optional | GTK; Flatpak pulls GNOME runtime, not needed if TigerVNC works |
 | Protocol-level RFB client | — | **verified** | scripted RFB 3.8 checks: handshake, Raw rects, tile-granular incremental updates, forced full refresh |
 
 (Desktop-viewer rows get filled in as they're tested; the protocol path underneath them
