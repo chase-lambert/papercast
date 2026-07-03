@@ -1,0 +1,27 @@
+# PaperCast config for the Onyx Boox Tab X C.
+# 13.3" Kaleido 3: monochrome 3200x2400 @ 300 ppi, 16 gray levels.
+#
+# Host:   papercast run --config boox-tab-x-c.toml
+# Bridge: adb reverse tcp:5900 tcp:5900
+# Tablet: AVNC -> 127.0.0.1:5900
+
+[eink]
+contrast = 1.3          # Kaleido 3 mono contrast is lower than plain Carta; push harder
+gamma = 0.9             # lift midtones a touch to compensate
+black-point = 8
+white-point = 248
+invert = false          # set true if your desktop theme is dark
+sharpen = 1.2           # 300 ppi rewards extra edge crispness
+sharpen-radius = 1
+dither = "bayer"
+levels = 16             # the panel's native grayscale depth
+fit = "letterbox"
+target-size = [3200, 2400]
+
+[mirror]
+listen = "127.0.0.1:5900"   # loopback only; adb reverse bridges the USB cable
+fps = 15
+# output = "DP-1"           # pick with `papercast probe`; defaults to the first output
+tile-size = 64
+full-refresh-secs = 60      # periodic ghost-clearing full redraw
+full-refresh-updates = 0
