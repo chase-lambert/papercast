@@ -1,4 +1,5 @@
 mod commands;
+mod pipeline_thread;
 
 use clap::{Parser, Subcommand};
 

@@ -34,6 +34,89 @@ pub struct RunArgs {
     /// e.g. "eDP-1". Default: the first output.
     #[arg(long)]
     pub output: Option<String>,
+
+    /// Skip the e-ink pipeline and mirror raw color frames.
+    #[arg(long)]
+    pub raw: bool,
+
+    /// Scale output to WIDTHxHEIGHT (e.g. the tablet's 3200x2400).
+    /// Default: keep the source size.
+    #[arg(long, value_parser = parse_size)]
+    pub scale_to: Option<(u32, u32)>,
+
+    /// Aspect-ratio handling when --scale-to changes the shape.
+    #[arg(long, value_enum, default_value_t = FitArg::Letterbox)]
+    pub fit: FitArg,
+
+    /// Contrast multiplier (1.0 = unchanged).
+    #[arg(long, default_value_t = 1.2)]
+    pub contrast: f32,
+
+    /// Gamma exponent (<1 brightens midtones).
+    #[arg(long, default_value_t = 1.0)]
+    pub gamma: f32,
+
+    /// Unsharp-mask strength (0 = off).
+    #[arg(long, default_value_t = 1.0)]
+    pub sharpen: f32,
+
+    /// Invert luminance (recommended for dark desktop themes: e-ink wants
+    /// black text on paper, not white text on ink).
+    #[arg(long)]
+    pub invert: bool,
+
+    /// Dithering algorithm.
+    #[arg(long, value_enum, default_value_t = DitherArg::Bayer)]
+    pub dither: DitherArg,
+
+    /// Gray levels to quantize to.
+    #[arg(long, default_value_t = 16)]
+    pub levels: u8,
+
+    /// Write processed frame #10 to this PNG for pipeline inspection.
+    #[arg(long)]
+    pub save_frame: Option<std::path::PathBuf>,
+}
+
+// CLI mirrors of the core enums: papercast-core stays clap-free.
+#[derive(Clone, Copy, ValueEnum)]
+pub enum FitArg {
+    Letterbox,
+    Crop,
+    Stretch,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+pub enum DitherArg {
+    None,
+    Bayer,
+    Fs,
+}
+
+impl RunArgs {
+    fn eink_config(&self) -> papercast_core::EinkConfig {
+        use papercast_core::dither::DitherMode;
+        use papercast_core::scale::FitMode;
+        papercast_core::EinkConfig {
+            contrast: self.contrast,
+            gamma: self.gamma,
+            sharpen: self.sharpen,
+            invert: self.invert,
+            dither: match self.dither {
+                DitherArg::None => DitherMode::None,
+                DitherArg::Bayer => DitherMode::Bayer,
+                DitherArg::Fs => DitherMode::FloydSteinberg,
+            },
+            levels: self.levels,
+            fit: match self.fit {
+                FitArg::Letterbox => FitMode::Letterbox,
+                FitArg::Crop => FitMode::Crop,
+                FitArg::Stretch => FitMode::Stretch,
+            },
+            target_size: self.scale_to,
+            ..Default::default()
+        }
+    }
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -61,7 +144,7 @@ pub fn run(args: RunArgs) -> anyhow::Result<()> {
 
 async fn serve(args: RunArgs) -> anyhow::Result<()> {
     let (width, height) = args.size;
-    let mut source = match args.source {
+    let captured = match args.source {
         SourceKind::Test => papercast_capture::test_pattern::spawn(width, height, args.fps),
         SourceKind::Wayland => papercast_capture::wayland::spawn(
             papercast_capture::wayland::WaylandConfig {
@@ -69,6 +152,12 @@ async fn serve(args: RunArgs) -> anyhow::Result<()> {
                 max_fps: args.fps,
             },
         )?,
+    };
+
+    let mut source = if args.raw {
+        captured
+    } else {
+        crate::pipeline_thread::spawn(captured, args.eink_config(), args.save_frame.clone())
     };
 
     anyhow::ensure!(
