@@ -36,7 +36,9 @@ $ ./target/release/papercast run --output DP-1
 Then connect any VNC viewer to `127.0.0.1:5900`:
 
 ```console
-$ vncviewer 127.0.0.1:5900                  # TigerVNC
+$ vncviewer 127.0.0.1:5900                  # TigerVNC (distro package), or:
+$ flatpak install --user flathub org.tigervnc.vncviewer
+$ flatpak run org.tigervnc.vncviewer 127.0.0.1:5900
 ```
 
 You should see a grayscale, dithered mirror of the chosen output. Don't point the viewer
