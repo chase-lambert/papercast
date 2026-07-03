@@ -149,10 +149,8 @@ impl Dispatch<wl_output::WlOutput, usize> for ProbeState {
                 info.description = Some(description)
             }
             wl_output::Event::Mode { flags, width, height, refresh } => {
-                if let WEnum::Value(flags) = flags {
-                    if flags.contains(wl_output::Mode::Current) {
-                        info.mode = Some((width, height, refresh));
-                    }
+                if matches!(flags, WEnum::Value(f) if f.contains(wl_output::Mode::Current)) {
+                    info.mode = Some((width, height, refresh));
                 }
             }
             wl_output::Event::Scale { factor } => info.scale = factor,

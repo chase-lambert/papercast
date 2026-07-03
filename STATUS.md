@@ -53,6 +53,31 @@ message, leaving the first byte of its H.264 encoding (`0x48`, decimal 72) to be
 as a bogus client message type. `vendor/rustvncserver/src/client.rs` now waits for the
 complete `SetEncodings` and `ClientCutText` messages before advancing the buffer.
 
+## Phase 1 progress (host-side e-ink display modes)
+
+Public roadmap now lives in `docs/ROADMAP.md`; this file stays as local handoff context.
+Working from the plan + design-review corrections.
+
+Decisions locked in for Phase 1 (from design review):
+
+- **Clippy policy.** PaperCast's own three crates are kept clippy-clean; the vendored
+  `rustvncserver` still emits upstream warnings and is treated as third-party (cleaned at
+  upstreaming M16, not patched locally). So the per-commit gate is
+  `cargo test --workspace` clean + `cargo clippy -p papercast-core -p papercast-capture
+  -p papercast` clean, and `cargo clippy --workspace` must *pass* (compile) but not be
+  warning-free until M16.
+- **Mode settings live in the binary, not core.** `papercast-core` stays pixel-only
+  (`EinkConfig`, dither/pipeline). The `ModeSettings { eink, fps, tile_size, refresh }`
+  type and the built-in mode table go in the binary crate (`crates/papercast/src/`). This
+  diverges from the plan's "put it in core" wording, per design-review point 5.
+- **Mode state = central manager, not last-writer-wins.** Base config + active mode name +
+  custom mode defs → effective settings = base + active-mode overlay. Config hot-reload
+  and `ctl mode` both go through it so neither clobbers the other.
+
+| Commit | Milestone |
+|---|---|
+| _this_ | M5 + cleanup: MIT `LICENSE`, workspace `license = "MIT"` (vendored stays Apache-2.0), `docs/ROADMAP.md`, VENDORED.md parser-fix note, clippy-clean papercast crates |
+
 ## After Phase 0 (backlog, see README roadmap)
 
 - Tablet arrival: Boox USB-debugging + `adb reverse` + AVNC (README has the walkthrough).

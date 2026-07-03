@@ -77,7 +77,7 @@ pub fn spawn(
                         save_png(&processed, &path);
                     }
                 }
-                if frame_no % 300 == 0 {
+                if frame_no.is_multiple_of(300) {
                     info!(
                         "pipeline: {frame_no} frames, avg {:.1} ms/frame",
                         busy_total.as_secs_f64() * 1000.0 / frame_no as f64

@@ -199,21 +199,22 @@ GC16 — that's physics, not transport; USB adds single-digit milliseconds.
 
 ## Roadmap
 
-- **Phase 1 — real e-ink control.** Replace VNC with a small length-prefixed protocol and
-  a minimal Kotlin receiver using the Onyx SDK, gaining per-region EPD refresh-mode
-  control (A2 for typing, GC16 for full refreshes) instead of approximating it from the
-  host side.
-- **Phase 2 — extended display.** Headless virtual output so the tablet is a true second
-  monitor rather than a mirror; wgpu compute pipeline for the image processing; clamshell
-  mode. (COSMIC's `zcosmic_workspace_image_capture_source_manager_v1` may offer a
-  workspace-capture shortcut worth exploring.)
-- **Portal backend.** xdg-desktop-portal + PipeWire capture for GNOME/KDE and anything
-  else without ext-image-copy-capture.
-- Smaller items: live resize when the captured output changes mode, damage-region
-  passthrough when scaling, rotated-output transforms, upstreaming the rustvncserver
-  bind patch.
+Full roadmap: [`docs/ROADMAP.md`](docs/ROADMAP.md). In brief:
+
+- **Phase 1 — e-ink display modes (host-side, no tablet needed).** Modos-Flow-style
+  Reading / Browsing / Writing / Video modes over the existing VNC path, switchable at
+  runtime via a control socket (`papercast ctl`); Atkinson dithering.
+- **Phase 2 — custom protocol + Android/Onyx receiver.** A length-prefixed protocol and a
+  minimal Kotlin receiver using the Onyx SDK for per-region EPD refresh-mode control (A2
+  for typing, GC16 for full refreshes). VNC stays as a fallback.
+- **Phase 3 — reach.** Portal/PipeWire capture backend (GNOME/KDE); true extended display
+  (not a mirror); wgpu compute pipeline; upstreaming the rustvncserver patches.
 
 ## License
 
-Not yet chosen (Apache-2.0/MIT dual, the Rust convention, is the likely pick). The
-vendored `rustvncserver` is Apache-2.0, which is compatible either way.
+PaperCast is MIT (see [`LICENSE`](LICENSE)). The vendored `rustvncserver` under
+`vendor/rustvncserver` remains Apache-2.0 — its own `LICENSE`/`NOTICE` are kept intact
+and its `Cargo.toml` sets `license = "Apache-2.0"` explicitly rather than inheriting the
+workspace license. Apache-2.0 is compatible with MIT. See
+[`vendor/rustvncserver/VENDORED.md`](vendor/rustvncserver/VENDORED.md) for what was
+patched.

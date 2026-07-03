@@ -36,7 +36,7 @@ pub fn unsharp(
             for (v, &b) in row.iter_mut().zip(blur_row) {
                 let orig = i32::from(*v);
                 let diff = orig - i32::from(b);
-                *v = (orig + (amount_fp * diff >> 8)).clamp(0, 255) as u8;
+                *v = (orig + ((amount_fp * diff) >> 8)).clamp(0, 255) as u8;
             }
         });
 }
@@ -53,8 +53,8 @@ fn blur_horizontal(src: &[u8], dst: &mut [u8], width: usize, radius: usize) {
                 u32::from(src_row[x])
             };
             let mut sum: u32 = (-(radius as isize)..=radius as isize).map(at).sum();
-            for x in 0..width {
-                dst_row[x] = (sum / window) as u8;
+            for (x, out) in dst_row.iter_mut().enumerate() {
+                *out = (sum / window) as u8;
                 sum += at(x as isize + radius as isize + 1);
                 sum -= at(x as isize - radius as isize);
             }
