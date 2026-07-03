@@ -29,7 +29,7 @@ Wayland compositor ──ext-image-copy-capture──▶ e-ink pipeline ──�
 
 ```console
 $ cargo build --release
-$ ./target/release/papercast probe          # confirm capture support, list outputs
+$ ./target/release/papercast probe          # one-shot: confirm capture support, list outputs
 $ ./target/release/papercast run --output DP-1
 ```
 
@@ -46,6 +46,17 @@ for Flatpak but unnecessary if TigerVNC is available.
 
 You should see a grayscale, dithered mirror of the chosen output. Don't point the viewer
 at the same monitor you're capturing, or you get an infinite tunnel.
+
+For a two-screen demo, capture one display and put the viewer window on the other. On the
+tested COSMIC setup, `DP-1` was the external monitor and `eDP-1` was the laptop panel:
+
+```console
+$ ./target/release/papercast run --output DP-1
+$ flatpak run org.tigervnc.vncviewer 127.0.0.1:5900
+```
+
+Move the TigerVNC window to the laptop panel if the compositor opens it on the captured
+monitor.
 
 Useful variations:
 
