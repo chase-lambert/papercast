@@ -1,5 +1,6 @@
 mod commands;
 mod config;
+mod mode;
 mod pipeline_thread;
 
 use clap::{Parser, Subcommand};
@@ -12,6 +13,9 @@ struct Cli {
 }
 
 #[derive(Subcommand)]
+// `Run` carries all the tunable flags so it dwarfs `Probe`; the CLI is parsed
+// exactly once, so boxing to shrink the enum would only add indirection.
+#[allow(clippy::large_enum_variant)]
 enum Command {
     /// Inspect the Wayland compositor: globals, outputs, shm formats, and
     /// which screen-capture protocols are available.

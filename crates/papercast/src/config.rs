@@ -8,17 +8,24 @@
 //! the pipeline picks it up on the next frame — tune contrast/sharpen/dither
 //! live while watching the mirror.
 
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use anyhow::Context;
 use papercast_core::EinkConfig;
 use serde::Deserialize;
 
+use crate::mode::ModeOverlay;
+
 #[derive(Debug, Default, Clone, Deserialize)]
 #[serde(default, deny_unknown_fields, rename_all = "kebab-case")]
 pub struct FileConfig {
     pub eink: EinkConfig,
     pub mirror: MirrorConfig,
+    /// Optional `[modes.<name>]` tables: override a built-in mode's fields or
+    /// define a new custom mode. Same keys as `[eink]` (minus output size)
+    /// plus the mirror-side fps/tile/refresh keys.
+    pub modes: BTreeMap<String, ModeOverlay>,
 }
 
 /// Non-pipeline settings. All optional: unset means "use default/CLI".
@@ -31,6 +38,9 @@ pub struct MirrorConfig {
     pub fps: Option<u32>,
     /// Output (monitor) name to capture.
     pub output: Option<String>,
+    /// Startup display mode name (built-in or a `[modes.<name>]`); unset =
+    /// plain base config (current behavior).
+    pub mode: Option<String>,
     /// Dirty-diff tile size in pixels.
     pub tile_size: Option<u32>,
     /// Force a full-frame refresh every N seconds (ghost clearing). 0 = off.

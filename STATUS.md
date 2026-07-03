@@ -76,7 +76,28 @@ Decisions locked in for Phase 1 (from design review):
 
 | Commit | Milestone |
 |---|---|
-| _this_ | M5 + cleanup: MIT `LICENSE`, workspace `license = "MIT"` (vendored stays Apache-2.0), `docs/ROADMAP.md`, VENDORED.md parser-fix note, clippy-clean papercast crates |
+| `482a957` | M5 + cleanup: MIT `LICENSE`, workspace `license = "MIT"` (vendored stays Apache-2.0), `docs/ROADMAP.md`, VENDORED.md parser-fix note, clippy-clean papercast crates |
+| _this_ | M6: mode presets + central `ModeState` manager (`crates/papercast/src/mode.rs`), `[modes.<name>]` config + `[mirror].mode`, `--mode` CLI, effective-settings wiring, serve-loop fps pacing, capture-fps rule |
+
+### M6 notes / open items for M7
+
+- `ModeState` (base + active + custom → effective) is implemented and unit-tested
+  (8 tests). `--mode`/`[mirror].mode` select the startup mode; unknown names error and
+  list valid names.
+- **fps rule (design pt 7) is honored:** no mode → capture at configured `[mirror].fps`,
+  no serve-loop drop (identical to pre-modes behavior). Mode active → capture at
+  `ModeState::max_fps()` (30 for the built-ins), serve loop drops to the effective fps.
+  Consequence: **runtime mode switching (M7) only works if a mode is active at startup**
+  (capture fps is fixed once). Start with `--mode browsing` to use `ctl`. Documented here
+  so M7 wiring keeps this.
+- **Hot-reload already routes through the manager:** the config watcher owns a `ModeState`
+  clone, updates the base `[eink]`, and pushes the *effective* eink — so editing the file
+  never drops the active mode's overlay. The watch channel still carries `EinkConfig`.
+- **M7 will:** widen the watch channel to `ModeSettings`, add the Unix control socket +
+  `papercast ctl` (mode/refresh/status), and share one `ModeState` between the socket and
+  the config watcher so both feed the same manager. The serve loop must then re-read
+  fps/tile/refresh from the channel (currently read once at startup).
+- Modes are Bayer-only for now (M8 adds Atkinson; not yet any mode's default).
 
 ## After Phase 0 (backlog, see README roadmap)
 
