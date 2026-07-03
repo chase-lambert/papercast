@@ -13,3 +13,6 @@ thiserror.workspace = true
 tracing.workspace = true
 wayland-client = "0.31"
 tokio = { version = "1", features = ["rt", "sync", "time"] }
+wayland-protocols = { version = "0.32.13", features = ["client", "staging"] }
+rustix = { version = "1.1.4", features = ["fs"] }
+memmap2 = "0.9.11"

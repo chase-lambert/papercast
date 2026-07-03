@@ -25,15 +25,23 @@ pub struct RunArgs {
     #[arg(long, default_value = "1280x960", value_parser = parse_size)]
     pub size: (u32, u32),
 
-    /// Target frames per second.
+    /// Target frames per second (an upper bound: the wayland source is
+    /// damage-driven and only produces frames when the screen changes).
     #[arg(long, default_value_t = 15)]
     pub fps: u32,
+
+    /// Which output (monitor) to capture, by name from `papercast probe`,
+    /// e.g. "eDP-1". Default: the first output.
+    #[arg(long)]
+    pub output: Option<String>,
 }
 
 #[derive(Clone, Copy, ValueEnum)]
 pub enum SourceKind {
     /// Animated synthetic pattern (no compositor needed).
     Test,
+    /// Live screen capture (ext-image-copy-capture-v1).
+    Wayland,
 }
 
 fn parse_size(s: &str) -> Result<(u32, u32), String> {
@@ -55,6 +63,12 @@ async fn serve(args: RunArgs) -> anyhow::Result<()> {
     let (width, height) = args.size;
     let mut source = match args.source {
         SourceKind::Test => papercast_capture::test_pattern::spawn(width, height, args.fps),
+        SourceKind::Wayland => papercast_capture::wayland::spawn(
+            papercast_capture::wayland::WaylandConfig {
+                output: args.output.clone(),
+                max_fps: args.fps,
+            },
+        )?,
     };
 
     anyhow::ensure!(
@@ -114,7 +128,14 @@ async fn serve(args: RunArgs) -> anyhow::Result<()> {
                     warn!("frame source ended");
                     return Ok(());
                 };
-                papercast_core::pixel::gray8_to_rgba(&frame.data, &mut rgba);
+                tracing::debug!(
+                    "frame: {}x{} {:?}, damage rects: {:?}",
+                    frame.width,
+                    frame.height,
+                    frame.format,
+                    frame.damage.as_ref().map(Vec::len)
+                );
+                papercast_core::pixel::frame_to_rgba(&frame, &mut rgba);
                 // update_from_slice diffs against the previous framebuffer
                 // and marks only the changed bounding region dirty, so
                 // connected clients get incremental updates automatically.

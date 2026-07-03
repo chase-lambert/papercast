@@ -8,3 +8,4 @@
 pub mod probe;
 pub mod source;
 pub mod test_pattern;
+pub mod wayland;
