@@ -1,0 +1,10 @@
+[package]
+name = "papercast-core"
+description = "E-ink image processing pipeline: grayscale, LUT, sharpen, dither, dirty tiles"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+thiserror.workspace = true

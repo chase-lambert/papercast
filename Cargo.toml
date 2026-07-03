@@ -1,0 +1,27 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/papercast-core",
+    "crates/papercast-capture",
+    "crates/papercast",
+]
+
+# Shared settings inherited by member crates via `key.workspace = true`,
+# so version/edition bumps happen in one place.
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/chaselambert/papercast"
+
+[workspace.dependencies]
+papercast-core = { path = "crates/papercast-core" }
+papercast-capture = { path = "crates/papercast-capture" }
+anyhow = "1"
+thiserror = "2"
+tracing = "0.1"
+
+# The e-ink pipeline is hot-path code; keep debug builds usable by
+# optimizing dependencies even in dev profile.
+[profile.dev.package."*"]
+opt-level = 2

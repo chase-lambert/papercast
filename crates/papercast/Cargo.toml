@@ -1,0 +1,15 @@
+[package]
+name = "papercast"
+description = "Mirror a Linux desktop to an e-ink tablet: capture, e-ink processing, VNC serving"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+papercast-core.workspace = true
+papercast-capture.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+clap = { version = "4", features = ["derive"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
