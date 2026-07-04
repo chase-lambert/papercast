@@ -289,20 +289,6 @@ impl ModeState {
     pub fn base_eink(&self) -> &EinkConfig {
         &self.base.eink
     }
-
-    /// Max fps across all selectable modes — the rate the capture source must
-    /// run at so any runtime mode switch can reach its fps. Used only when a
-    /// mode is active (see the no-mode/mode-active rule in `run.rs`).
-    pub fn max_fps(&self) -> u32 {
-        let base = &self.base;
-        self.valid_names()
-            .iter()
-            .filter_map(|n| self.overlay_for(n))
-            .map(|o| o.apply(base).fps)
-            .max()
-            .unwrap_or(base.fps)
-            .max(base.fps)
-    }
 }
 
 #[cfg(test)]
@@ -394,9 +380,4 @@ mod tests {
         assert_eq!(e.eink.levels, 4); // writing overlay still applied
     }
 
-    #[test]
-    fn max_fps_is_highest_selectable() {
-        let st = ModeState::new(base(), BTreeMap::new(), None).unwrap();
-        assert_eq!(st.max_fps(), 30); // writing/video
-    }
 }

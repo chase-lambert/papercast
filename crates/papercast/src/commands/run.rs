@@ -1,13 +1,13 @@
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use anyhow::Context;
 use clap::{Args, ValueEnum};
 use papercast_core::dither::DitherMode;
 use papercast_core::scale::FitMode;
 use papercast_core::tiles::TileDiff;
-use papercast_core::{EinkConfig, Rect};
+use papercast_core::Rect;
 
 use crate::mode::{ModeSettings, ModeState};
 // Note: the crate re-exports `events::ServerEvent`, but `VncServer::new`'s
@@ -233,31 +233,31 @@ pub fn run(args: RunArgs) -> anyhow::Result<()> {
 async fn serve(args: RunArgs) -> anyhow::Result<()> {
     let settings = resolve(&args)?;
     let effective = settings.mode.effective();
-    let mode_active = settings.mode.active().is_some();
 
-    // Capture rate (design rule): with a mode active, run the source at the
-    // max fps any mode may switch to, and let the serve loop drop frames down
-    // to the effective rate. With no mode active, keep the configured fps
-    // exactly (preserves pre-modes behavior; no serve-loop dropping).
-    let capture_fps =
-        if mode_active { settings.mode.max_fps() } else { effective.fps };
+    // Two watch channels carry runtime settings:
+    //  - `settings_tx`: the full effective ModeSettings — pipeline reads
+    //    `.eink`, the serve loop reads tile/refresh.
+    //  - `fps_tx`: fps only, decoupled so the capture crate needn't know the
+    //    binary's ModeSettings type. The source paces itself off this, so a
+    //    runtime mode switch re-paces at the source — no serve-loop dropping,
+    //    no wasted pipeline work, no fixed-fps-at-startup constraint.
+    let (settings_tx, mut settings_rx) = tokio::sync::watch::channel(effective.clone());
+    let (fps_tx, fps_rx) = tokio::sync::watch::channel(effective.fps);
 
     let captured = match args.source {
         SourceKind::Test => {
             let (w, h) = args.size;
-            papercast_capture::test_pattern::spawn(w, h, capture_fps)
+            papercast_capture::test_pattern::spawn(w, h, effective.fps, Some(fps_rx))
         }
         SourceKind::Wayland => {
             papercast_capture::wayland::spawn(papercast_capture::wayland::WaylandConfig {
                 output: settings.output.clone(),
-                max_fps: capture_fps,
+                max_fps: effective.fps,
+                fps_rx: Some(fps_rx),
             })?
         }
     };
 
-    // Hot-reload channel: the notify watcher pushes new configs, the
-    // pipeline thread applies them between frames.
-    let (eink_tx, eink_rx) = tokio::sync::watch::channel(effective.eink.clone());
     let mut source = if args.raw {
         captured
     } else {
@@ -266,14 +266,15 @@ async fn serve(args: RunArgs) -> anyhow::Result<()> {
             effective.eink.clone(),
             args.save_frame.clone(),
             args.latency_test,
-            eink_rx,
+            settings_rx.clone(),
         )
     };
     if let (Some(path), false) = (&args.config, args.raw) {
         // The watcher owns a clone of the mode state so a config edit updates
         // the *base* eink and re-applies the active mode's overlay — editing
-        // the file never drops the active mode.
-        spawn_config_watcher(path.clone(), settings.mode.clone(), eink_tx);
+        // the file never drops the active mode. (7c replaces the clone with a
+        // shared Arc<Mutex<ModeState>> once ctl can also mutate it.)
+        spawn_config_watcher(path.clone(), settings.mode.clone(), settings_tx, fps_tx);
     }
 
     anyhow::ensure!(
@@ -321,7 +322,7 @@ async fn serve(args: RunArgs) -> anyhow::Result<()> {
     });
 
     info!(
-        "mirroring {}x{} @ {} fps cap ({}) — connect a VNC viewer to {}",
+        "mirroring {}x{} @ {} fps ({}) — connect a VNC viewer to {}",
         fb_w,
         fb_h,
         effective.fps,
@@ -329,15 +330,15 @@ async fn serve(args: RunArgs) -> anyhow::Result<()> {
         settings.listen
     );
 
-    let mut tiler = TileDiff::new(effective.tile_size, 8);
+    // Serve-loop view of the effective settings, refreshed from the watch
+    // channel each iteration so a runtime mode switch changes tile/refresh
+    // live. The source paces itself (via `fps_tx`); the serve loop no longer
+    // drops frames.
+    let mut current = effective.clone();
+    let mut tiler = TileDiff::new(current.tile_size, 8);
     let mut rgba = Vec::new();
     let mut updates_since_full: u64 = 0;
     let mut last_full = Instant::now();
-
-    // Serve-loop pacing: only when a mode is active (see capture_fps above).
-    // Drop a frame if it arrives sooner than the effective mode's interval.
-    let frame_interval = Duration::from_secs_f64(1.0 / effective.fps.max(1) as f64);
-    let mut last_sent = Instant::now() - frame_interval;
 
     loop {
         tokio::select! {
@@ -347,10 +348,24 @@ async fn serve(args: RunArgs) -> anyhow::Result<()> {
                     return Ok(());
                 };
 
-                if mode_active && last_sent.elapsed() < frame_interval {
-                    continue; // pace down to the effective mode fps
+                // Pick up a mode/config change: rebuild the tiler on a tile-size
+                // change (its full-frame first diff doubles as the switch
+                // redraw); otherwise force one full refresh since levels/dither
+                // changed globally.
+                if settings_rx.has_changed().unwrap_or(false) {
+                    let next = settings_rx.borrow_and_update().clone();
+                    if next.tile_size != current.tile_size {
+                        tiler = TileDiff::new(next.tile_size, 8);
+                    } else if next.eink != current.eink {
+                        server
+                            .framebuffer()
+                            .mark_dirty_region(0, 0, fb_w as u16, fb_h as u16)
+                            .await;
+                    }
+                    last_full = Instant::now();
+                    updates_since_full = 0;
+                    current = next;
                 }
-                last_sent = Instant::now();
 
                 if args.raw {
                     // Raw color path: let the server's own full-frame diff
@@ -387,10 +402,10 @@ async fn serve(args: RunArgs) -> anyhow::Result<()> {
                 // Ghost-clearing: periodically force clients to redraw the
                 // whole frame even though pixel data didn't change. On the
                 // tablet this gives the EPD a chance to do a clean settle.
-                let due_time = effective.full_refresh_secs > 0
-                    && last_full.elapsed().as_secs() >= effective.full_refresh_secs;
-                let due_count = effective.full_refresh_updates > 0
-                    && updates_since_full >= effective.full_refresh_updates;
+                let due_time = current.full_refresh_secs > 0
+                    && last_full.elapsed().as_secs() >= current.full_refresh_secs;
+                let due_count = current.full_refresh_updates > 0
+                    && updates_since_full >= current.full_refresh_updates;
                 if due_time || due_count {
                     server
                         .framebuffer()
@@ -425,9 +440,10 @@ fn extract_rect_rgba(gray: &[u8], stride: u32, rect: Rect, out: &mut Vec<u8>) {
     }
 }
 
-/// Watch the config file's directory and push `[eink]` changes to the
-/// pipeline. Directory (not file) watching survives editors that replace
-/// the file on save; parse errors are logged and skipped.
+/// Watch the config file's directory and push `[eink]` changes through the
+/// mode state to the effective-settings channels. Directory (not file)
+/// watching survives editors that replace the file on save; parse errors are
+/// logged and skipped.
 ///
 /// The reloaded `[eink]` is the *base* config: it's fed through the mode
 /// state so the active mode's overlay is re-applied before the pipeline sees
@@ -435,7 +451,8 @@ fn extract_rect_rgba(gray: &[u8], stride: u32, rect: Rect, out: &mut Vec<u8>) {
 fn spawn_config_watcher(
     path: PathBuf,
     mut state: ModeState,
-    tx: tokio::sync::watch::Sender<EinkConfig>,
+    settings_tx: tokio::sync::watch::Sender<ModeSettings>,
+    fps_tx: tokio::sync::watch::Sender<u32>,
 ) {
     use notify::{RecursiveMode, Watcher};
 
@@ -458,7 +475,7 @@ fn spawn_config_watcher(
             }
             info!("hot-reload active: edit {} while running", path.display());
 
-            let mut last_sent = state.effective().eink;
+            let mut last_sent = state.effective();
             for event in raw_rx {
                 let Ok(event) = event else { continue };
                 let ours = event.paths.iter().any(|p| p.file_name() == path.file_name());
@@ -472,11 +489,15 @@ fn spawn_config_watcher(
                     Ok(base_eink) if base_eink != *state.base_eink() => {
                         info!("config changed, applying [eink] update");
                         state.set_base_eink(base_eink);
-                        let effective_eink = state.effective().eink;
-                        if effective_eink != last_sent {
-                            last_sent = effective_eink.clone();
-                            if tx.send(effective_eink).is_err() {
-                                return; // pipeline gone
+                        let effective = state.effective();
+                        if effective != last_sent {
+                            if effective.fps != last_sent.fps && fps_tx.send(effective.fps).is_err()
+                            {
+                                return; // capture gone
+                            }
+                            last_sent = effective.clone();
+                            if settings_tx.send(effective).is_err() {
+                                return; // pipeline/serve gone
                             }
                         }
                     }

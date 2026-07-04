@@ -11,27 +11,39 @@ use std::time::{Duration, Instant};
 
 use papercast_core::overlay::{draw_ms_counter, fill_rect};
 use papercast_core::{Frame, PixelFormat};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 
 use crate::source::{SourceHandle, FRAME_CHANNEL_DEPTH};
 
-/// Spawn the test source onto the current tokio runtime.
-pub fn spawn(width: u32, height: u32, fps: u32) -> SourceHandle {
+/// Spawn the test source onto the current tokio runtime. `fps_rx`, if given,
+/// re-paces the source live (mode switches); otherwise `fps` is fixed.
+pub fn spawn(
+    width: u32,
+    height: u32,
+    fps: u32,
+    fps_rx: Option<watch::Receiver<u32>>,
+) -> SourceHandle {
     let (tx, rx) = mpsc::channel(FRAME_CHANNEL_DEPTH);
-    tokio::spawn(produce(width, height, fps, tx));
+    tokio::spawn(produce(width, height, fps, fps_rx, tx));
     SourceHandle { width, height, frames: rx }
 }
 
-async fn produce(width: u32, height: u32, fps: u32, tx: mpsc::Sender<Frame>) {
+async fn produce(
+    width: u32,
+    height: u32,
+    fps: u32,
+    fps_rx: Option<watch::Receiver<u32>>,
+    tx: mpsc::Sender<Frame>,
+) {
     let background = render_background(width, height);
     let start = Instant::now();
-    let mut ticker = tokio::time::interval(Duration::from_secs_f64(1.0 / f64::from(fps.max(1))));
-    // If a tick is missed (slow consumer), don't try to "catch up" with a
-    // burst of stale frames — skip ahead. Latency over completeness.
-    ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
     loop {
-        ticker.tick().await;
+        // Re-read the target fps each tick so a runtime mode switch re-paces
+        // immediately. `borrow()` is a cheap non-blocking read.
+        let target_fps = fps_rx.as_ref().map(|r| *r.borrow()).unwrap_or(fps).max(1);
+        tokio::time::sleep(Duration::from_secs_f64(1.0 / f64::from(target_fps))).await;
+
         let frame = render(&background, width, height, start.elapsed());
         // send() fails only when the receiver is dropped == consumer gone.
         if tx.send(frame).await.is_err() {

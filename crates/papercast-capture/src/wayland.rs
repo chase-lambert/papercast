@@ -43,8 +43,13 @@ pub struct WaylandConfig {
     /// `None` = first output.
     pub output: Option<String>,
     /// Upper bound on capture rate; the real rate is damage-driven and
-    /// usually lower.
+    /// usually lower. Used as the fixed rate when `fps_rx` is `None`, and as
+    /// the initial rate otherwise.
     pub max_fps: u32,
+    /// Optional live fps override (mode switches). The capture thread reads it
+    /// with a non-blocking `borrow()` between frames — no `await`, so it's
+    /// safe on the Wayland thread.
+    pub fps_rx: Option<tokio::sync::watch::Receiver<u32>>,
 }
 
 /// Start the capture thread and wait for the session to negotiate a size.
@@ -155,7 +160,12 @@ fn capture_thread(
     // cursor plane on the e-ink side to do better.
     let session = capture_mgr.create_session(&source, Options::PaintCursors, &qh, ());
 
-    let min_frame_interval = Duration::from_secs_f64(1.0 / f64::from(config.max_fps.max(1)));
+    // Current min frame interval, re-read each frame so a mode switch re-paces
+    // live. `borrow()` is a non-blocking read; nothing awaits on this thread.
+    let frame_interval = || {
+        let fps = config.fps_rx.as_ref().map(|r| *r.borrow()).unwrap_or(config.max_fps);
+        Duration::from_secs_f64(1.0 / f64::from(fps.max(1)))
+    };
     let mut announced_size: Option<(u32, u32)> = None;
     let mut handled_generation = 0u64;
 
@@ -218,7 +228,7 @@ fn capture_thread(
         );
 
         let mut frame = start_capture(&session, &buffer, &qh);
-        let mut last_send = Instant::now() - min_frame_interval;
+        let mut last_send = Instant::now() - frame_interval();
 
         // Inner loop: one iteration per dispatched batch of events.
         loop {
@@ -270,10 +280,12 @@ fn capture_thread(
                 }
 
                 // Cap the capture rate: the compositor would happily hand us
-                // 120 fps of damage; e-ink has no use for it.
+                // 120 fps of damage; e-ink has no use for it. The interval is
+                // re-read here so a runtime mode switch takes effect at once.
                 let elapsed = last_send.elapsed();
-                if elapsed < min_frame_interval {
-                    std::thread::sleep(min_frame_interval - elapsed);
+                let interval = frame_interval();
+                if elapsed < interval {
+                    std::thread::sleep(interval - elapsed);
                 }
                 last_send = Instant::now();
 

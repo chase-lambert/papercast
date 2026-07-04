@@ -13,6 +13,8 @@ use papercast_core::{EinkConfig, Pipeline};
 use tokio::sync::mpsc;
 use tracing::{error, info, warn};
 
+use crate::mode::ModeSettings;
+
 /// Which processed frame `--save-frame` writes (frame 1 can be a splash of
 /// mid-connection garbage; by 10 the screen content has settled).
 const SAVE_FRAME_INDEX: u64 = 10;
@@ -22,7 +24,7 @@ pub fn spawn(
     config: EinkConfig,
     save_frame: Option<PathBuf>,
     latency_stamp: bool,
-    mut config_rx: tokio::sync::watch::Receiver<EinkConfig>,
+    mut settings_rx: tokio::sync::watch::Receiver<ModeSettings>,
 ) -> SourceHandle {
     let pipeline = Pipeline::new(config);
     let (out_w, out_h) = pipeline.output_size((input.width, input.height));
@@ -40,9 +42,10 @@ pub fn spawn(
             while let Some(frame) = input.frames.blocking_recv() {
                 // Hot reload: apply a pending config between frames. The
                 // output size is fixed at startup (the VNC framebuffer was
-                // sized from it), so a target-size edit is refused.
-                if config_rx.has_changed().unwrap_or(false) {
-                    let mut cfg = config_rx.borrow_and_update().clone();
+                // sized from it), so a target-size edit is refused. Only the
+                // `.eink` part of ModeSettings concerns the pipeline.
+                if settings_rx.has_changed().unwrap_or(false) {
+                    let mut cfg = settings_rx.borrow_and_update().eink.clone();
                     let fixed = pipeline.config().target_size;
                     if cfg.target_size != fixed {
                         warn!("target-size can't change at runtime; keeping {fixed:?}");

@@ -77,31 +77,34 @@ Decisions locked in for Phase 1 (from design review):
 | Commit | Milestone |
 |---|---|
 | `482a957` | M5 + cleanup: MIT `LICENSE`, workspace `license = "MIT"` (vendored stays Apache-2.0), `docs/ROADMAP.md`, VENDORED.md parser-fix note, clippy-clean papercast crates |
-| `a94b181` | M6: mode presets + central `ModeState` manager (`crates/papercast/src/mode.rs`), `[modes.<name>]` config + `[mirror].mode`, `--mode` CLI, effective-settings wiring, serve-loop fps pacing, capture-fps rule |
-| _this_ | M8: `DitherMode::Atkinson` (error diffusion, 6/8 spread), `--dither atkinson` + `dither = "atkinson"`, hand-computed unit test |
+| `a94b181` | M6: mode presets + central `ModeState` manager (`crates/papercast/src/mode.rs`), `[modes.<name>]` config + `[mirror].mode`, `--mode` CLI |
+| `cde6e75` | M8: `DitherMode::Atkinson` (error diffusion, 6/8 spread), `--dither atkinson` + `dither = "atkinson"`, hand-computed unit test |
+| `e1eb265` | docs: CLI/README/STATUS wording fixes after design review |
+| _this_ | M7a: dynamic pacing at the source (widened `watch<ModeSettings>` + fps-only `watch<u32>` into the capture crate); deleted serve-loop dropping + `max_fps`/`mode_active` split |
 
-### M6 notes / open items for M7
+### M7 progress (control socket + runtime switching — redesigned per review)
 
-- `ModeState` (base + active + custom → effective) is implemented and unit-tested
-  (8 tests). `--mode`/`[mirror].mode` select the startup mode; unknown names error and
-  list valid names.
-- **fps rule (design pt 7) is honored:** no mode → capture at configured `[mirror].fps`,
-  no serve-loop drop (identical to pre-modes behavior). Mode active → capture at
-  `ModeState::max_fps()` (30 for the built-ins), serve loop drops to the effective fps.
-  Consequence: **runtime mode switching (M7) only works if a mode is active at startup**
-  (capture fps is fixed once). Start with `--mode browsing` to use `ctl`. Documented here
-  so M7 wiring keeps this.
-- **Hot-reload already routes through the manager:** the config watcher owns a `ModeState`
-  clone, updates the base `[eink]`, and pushes the *effective* eink — so editing the file
-  never drops the active mode's overlay. The watch channel still carries `EinkConfig`.
-- **M7 will:** widen the watch channel to `ModeSettings`, add the Unix control socket +
-  `papercast ctl` (mode/refresh/status), and share **one** `ModeState` between the socket
-  and the config watcher so both feed the same manager. The serve loop must then re-read
-  fps/tile/refresh from the channel (currently read once at startup). Do **not** build M7
-  on the current setup as-is — the config watcher today gets a *clone* of `ModeState`
-  (fine for fixed startup modes) and the serve loop reads tile/fps/refresh once. If M7
-  keeps that, `ctl mode` and config hot-reload will operate on separate copies and
-  diverge. The single shared manager is the fix.
+Review rejected the "runtime switching needs a startup mode" constraint and the M6
+serve-loop pacing (jitter bug + wasted CPU). New design paces **at the source**.
+
+- **7a (this commit) — DONE.** The eink-only hot-reload channel is now
+  `watch::channel(ModeSettings)` (pipeline reads `.eink`, serve loop reads
+  tile/`full_refresh_*` each iteration and rebuilds `TileDiff` on tile-size change). A
+  separate `watch::channel(u32)` feeds fps into the capture crate; the Wayland thread and
+  the test source re-read it (non-blocking `borrow()`, no `await`) and pace themselves.
+  Serve-loop frame-dropping and the `mode_active`/`max_fps` split are gone; `max_fps()`
+  removed. No startup-mode constraint anymore.
+- **7b — TODO.** Unix socket `$XDG_RUNTIME_DIR/papercast.sock` (fallback
+  `/tmp/papercast-$UID.sock`), mode 0600, stale-socket unlink+rebind, "another papercast
+  is running" if a live one answers, remove on clean exit. Newline-JSON
+  mode/refresh/status; `papercast ctl` subcommand.
+- **7c — TODO.** Replace the config watcher's `ModeState` **clone** with a shared
+  `Arc<Mutex<ModeState>>` that both the watcher and the ctl server mutate; every mutation
+  recomputes `effective()` under the lock and sends both channels. `ctl refresh` signals
+  the serve loop to `mark_dirty_region` the whole frame. On mode switch force one full
+  refresh even if tile size is unchanged (levels/dither changed globally). Then update
+  `--mode` help + README (switching works with or without a startup mode; COSMIC shortcut
+  example) and add `tools/rfb_mode_check.py` incl. a ~30 fps writing-mode regression check.
 - **M8 done, but Atkinson is NOT yet any mode's default** (design pt 8: visual-gate
   first). It's opt-in via `dither = "atkinson"`. Before making it the `reading` default,
   compare against Bayer with `--save-frame` PNGs and a live viewer check, then flip the
