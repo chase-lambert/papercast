@@ -1,5 +1,5 @@
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use anyhow::Context;
@@ -9,6 +9,7 @@ use papercast_core::scale::FitMode;
 use papercast_core::tiles::TileDiff;
 use papercast_core::Rect;
 
+use crate::control;
 use crate::mode::{ModeSettings, ModeState};
 // Note: the crate re-exports `events::ServerEvent`, but `VncServer::new`'s
 // receiver actually carries `server::ServerEvent` — a different enum.
@@ -49,10 +50,10 @@ pub struct RunArgs {
     #[arg(long)]
     pub output: Option<String>,
 
-    /// Display mode: reading | browsing | writing | video (or a custom mode
-    /// from config). Omit for plain base config (current behavior). Runtime
-    /// switching (`papercast ctl`) is planned and will require a mode active
-    /// at startup.
+    /// Startup display mode: reading | browsing | writing | video (or a custom
+    /// mode from config). Omit for plain base config. Switch at runtime with
+    /// `papercast ctl mode <name>` — that works whether or not a startup mode
+    /// was set.
     #[arg(long)]
     pub mode: Option<String>,
 
@@ -231,8 +232,11 @@ pub fn run(args: RunArgs) -> anyhow::Result<()> {
 }
 
 async fn serve(args: RunArgs) -> anyhow::Result<()> {
-    let settings = resolve(&args)?;
-    let effective = settings.mode.effective();
+    let Settings { listen, output, mode } = resolve(&args)?;
+    let effective = mode.effective();
+    // One shared mode state, mutated by both the config watcher (base reload)
+    // and the ctl server (set_mode) — never cloned, so the two can't diverge.
+    let mode_state = Arc::new(Mutex::new(mode));
 
     // Two watch channels carry runtime settings:
     //  - `settings_tx`: the full effective ModeSettings — pipeline reads
@@ -243,6 +247,8 @@ async fn serve(args: RunArgs) -> anyhow::Result<()> {
     //    no wasted pipeline work, no fixed-fps-at-startup constraint.
     let (settings_tx, mut settings_rx) = tokio::sync::watch::channel(effective.clone());
     let (fps_tx, fps_rx) = tokio::sync::watch::channel(effective.fps);
+    // `ctl refresh` → force one full redraw from the serve loop.
+    let (refresh_tx, mut refresh_rx) = tokio::sync::mpsc::channel::<()>(8);
 
     let captured = match args.source {
         SourceKind::Test => {
@@ -251,7 +257,7 @@ async fn serve(args: RunArgs) -> anyhow::Result<()> {
         }
         SourceKind::Wayland => {
             papercast_capture::wayland::spawn(papercast_capture::wayland::WaylandConfig {
-                output: settings.output.clone(),
+                output: output.clone(),
                 max_fps: effective.fps,
                 fps_rx: Some(fps_rx),
             })?
@@ -270,11 +276,15 @@ async fn serve(args: RunArgs) -> anyhow::Result<()> {
         )
     };
     if let (Some(path), false) = (&args.config, args.raw) {
-        // The watcher owns a clone of the mode state so a config edit updates
-        // the *base* eink and re-applies the active mode's overlay — editing
-        // the file never drops the active mode. (7c replaces the clone with a
-        // shared Arc<Mutex<ModeState>> once ctl can also mutate it.)
-        spawn_config_watcher(path.clone(), settings.mode.clone(), settings_tx, fps_tx);
+        // The watcher mutates the shared mode state: a config edit updates the
+        // *base* eink and re-applies the active mode's overlay, so editing the
+        // file never drops the active mode.
+        spawn_config_watcher(
+            path.clone(),
+            Arc::clone(&mode_state),
+            settings_tx.clone(),
+            fps_tx.clone(),
+        );
     }
 
     anyhow::ensure!(
@@ -298,12 +308,23 @@ async fn serve(args: RunArgs) -> anyhow::Result<()> {
     // not limp along serving nobody. `mut`: select! polls it via &mut.
     let mut listener = {
         let server = Arc::clone(&server);
-        let addr = settings.listen.clone();
+        let addr = listen.clone();
         tokio::spawn(async move {
             info!("VNC server listening on {addr}");
             server.listen(addr.as_str()).await
         })
     };
+
+    // Control socket: `papercast ctl` drives this running mirror. Held for the
+    // process lifetime; the guard unlinks the socket on clean exit.
+    let _socket_guard = control::spawn_server(control::ServerCtx {
+        state: Arc::clone(&mode_state),
+        settings_tx: settings_tx.clone(),
+        fps_tx: fps_tx.clone(),
+        refresh_tx: refresh_tx.clone(),
+        framebuffer: (fb_w, fb_h),
+        output: output.clone(),
+    })?;
 
     // Event drain: Phase 0 is view-only, so pointer/key events are ignored;
     // connects/disconnects are logged so you can see the tablet arrive.
@@ -321,13 +342,15 @@ async fn serve(args: RunArgs) -> anyhow::Result<()> {
         }
     });
 
+    let active_mode = mode_state
+        .lock()
+        .expect("mode state poisoned")
+        .active()
+        .map(|m| format!("mode: {m}"))
+        .unwrap_or_else(|| "no mode".into());
     info!(
-        "mirroring {}x{} @ {} fps ({}) — connect a VNC viewer to {}",
-        fb_w,
-        fb_h,
+        "mirroring {fb_w}x{fb_h} @ {} fps ({active_mode}) — connect a VNC viewer to {listen}",
         effective.fps,
-        settings.mode.active().map(|m| format!("mode: {m}")).unwrap_or_else(|| "no mode".into()),
-        settings.listen
     );
 
     // Serve-loop view of the effective settings, refreshed from the watch
@@ -342,30 +365,40 @@ async fn serve(args: RunArgs) -> anyhow::Result<()> {
 
     loop {
         tokio::select! {
+            // A mode switch or config edit changed the effective settings.
+            // Handled in its own arm so it applies even on an idle screen (no
+            // frames arriving). Rebuild the tiler on a tile-size change (its
+            // full-frame first diff doubles as the switch redraw); otherwise
+            // force one full refresh since levels/dither changed globally.
+            Ok(()) = settings_rx.changed() => {
+                let next = settings_rx.borrow_and_update().clone();
+                if next.tile_size != current.tile_size {
+                    tiler = TileDiff::new(next.tile_size, 8);
+                } else if next != current {
+                    server
+                        .framebuffer()
+                        .mark_dirty_region(0, 0, fb_w as u16, fb_h as u16)
+                        .await;
+                }
+                last_full = Instant::now();
+                updates_since_full = 0;
+                current = next;
+            }
+            // `ctl refresh`: force one full redraw now.
+            Some(()) = refresh_rx.recv() => {
+                server
+                    .framebuffer()
+                    .mark_dirty_region(0, 0, fb_w as u16, fb_h as u16)
+                    .await;
+                last_full = Instant::now();
+                updates_since_full = 0;
+                tracing::debug!("forced full refresh (ctl)");
+            }
             maybe_frame = source.frames.recv() => {
                 let Some(frame) = maybe_frame else {
                     warn!("frame source ended");
                     return Ok(());
                 };
-
-                // Pick up a mode/config change: rebuild the tiler on a tile-size
-                // change (its full-frame first diff doubles as the switch
-                // redraw); otherwise force one full refresh since levels/dither
-                // changed globally.
-                if settings_rx.has_changed().unwrap_or(false) {
-                    let next = settings_rx.borrow_and_update().clone();
-                    if next.tile_size != current.tile_size {
-                        tiler = TileDiff::new(next.tile_size, 8);
-                    } else if next.eink != current.eink {
-                        server
-                            .framebuffer()
-                            .mark_dirty_region(0, 0, fb_w as u16, fb_h as u16)
-                            .await;
-                    }
-                    last_full = Instant::now();
-                    updates_since_full = 0;
-                    current = next;
-                }
 
                 if args.raw {
                     // Raw color path: let the server's own full-frame diff
@@ -423,7 +456,30 @@ async fn serve(args: RunArgs) -> anyhow::Result<()> {
                     Err(e) => anyhow::bail!("VNC listener task panicked: {e}"),
                 }
             }
+            // Clean shutdown so the socket guard runs and unlinks the socket.
+            _ = shutdown_signal() => {
+                info!("shutting down");
+                return Ok(());
+            }
         }
+    }
+}
+
+/// Resolve when the process is asked to stop (Ctrl-C / SIGTERM).
+async fn shutdown_signal() {
+    use tokio::signal::unix::{signal, SignalKind};
+    let mut term = match signal(SignalKind::terminate()) {
+        Ok(s) => s,
+        Err(e) => {
+            warn!("cannot install SIGTERM handler: {e}");
+            // Fall back to Ctrl-C only.
+            let _ = tokio::signal::ctrl_c().await;
+            return;
+        }
+    };
+    tokio::select! {
+        _ = tokio::signal::ctrl_c() => {}
+        _ = term.recv() => {}
     }
 }
 
@@ -450,7 +506,7 @@ fn extract_rect_rgba(gray: &[u8], stride: u32, rect: Rect, out: &mut Vec<u8>) {
 /// it. A config edit therefore never drops the active mode.
 fn spawn_config_watcher(
     path: PathBuf,
-    mut state: ModeState,
+    state: Arc<Mutex<ModeState>>,
     settings_tx: tokio::sync::watch::Sender<ModeSettings>,
     fps_tx: tokio::sync::watch::Sender<u32>,
 ) {
@@ -475,7 +531,7 @@ fn spawn_config_watcher(
             }
             info!("hot-reload active: edit {} while running", path.display());
 
-            let mut last_sent = state.effective();
+            let mut last_sent = state.lock().expect("mode state poisoned").effective();
             for event in raw_rx {
                 let Ok(event) = event else { continue };
                 let ours = event.paths.iter().any(|p| p.file_name() == path.file_name());
@@ -485,24 +541,33 @@ fn spawn_config_watcher(
                 // Editors write in bursts (truncate+write, or tmp+rename);
                 // give the file a moment to be complete.
                 std::thread::sleep(std::time::Duration::from_millis(50));
-                match config::reload_eink(&path) {
-                    Ok(base_eink) if base_eink != *state.base_eink() => {
-                        info!("config changed, applying [eink] update");
-                        state.set_base_eink(base_eink);
-                        let effective = state.effective();
-                        if effective != last_sent {
-                            if effective.fps != last_sent.fps && fps_tx.send(effective.fps).is_err()
-                            {
-                                return; // capture gone
-                            }
-                            last_sent = effective.clone();
-                            if settings_tx.send(effective).is_err() {
-                                return; // pipeline/serve gone
-                            }
-                        }
+                let base_eink = match config::reload_eink(&path) {
+                    Ok(cfg) => cfg,
+                    Err(e) => {
+                        warn!("config reload skipped: {e:#}");
+                        continue;
                     }
-                    Ok(_) => {} // no effective change
-                    Err(e) => warn!("config reload skipped: {e:#}"),
+                };
+                // Update the base under the lock; the active mode's overlay is
+                // re-applied by `effective()`, so the mode is never dropped.
+                let effective = {
+                    let mut st = state.lock().expect("mode state poisoned");
+                    if base_eink == *st.base_eink() {
+                        continue; // no change to the base config
+                    }
+                    st.set_base_eink(base_eink);
+                    st.effective()
+                };
+                if effective == last_sent {
+                    continue; // overlay masked the change
+                }
+                info!("config changed, applying [eink] update");
+                if effective.fps != last_sent.fps && fps_tx.send(effective.fps).is_err() {
+                    return; // capture gone
+                }
+                last_sent = effective.clone();
+                if settings_tx.send(effective).is_err() {
+                    return; // pipeline/serve gone
                 }
             }
         })

@@ -37,12 +37,20 @@ async fn produce(
 ) {
     let background = render_background(width, height);
     let start = Instant::now();
+    let mut last_send = Instant::now();
 
     loop {
         // Re-read the target fps each tick so a runtime mode switch re-paces
-        // immediately. `borrow()` is a cheap non-blocking read.
+        // immediately (`borrow()` is a cheap non-blocking read), and sleep only
+        // the *remainder* of the interval so render/send time doesn't stack on
+        // top of the sleep — otherwise the effective fps undershoots.
         let target_fps = fps_rx.as_ref().map(|r| *r.borrow()).unwrap_or(fps).max(1);
-        tokio::time::sleep(Duration::from_secs_f64(1.0 / f64::from(target_fps))).await;
+        let interval = Duration::from_secs_f64(1.0 / f64::from(target_fps));
+        let elapsed = last_send.elapsed();
+        if elapsed < interval {
+            tokio::time::sleep(interval - elapsed).await;
+        }
+        last_send = Instant::now();
 
         let frame = render(&background, width, height, start.elapsed());
         // send() fails only when the receiver is dropped == consumer gone.

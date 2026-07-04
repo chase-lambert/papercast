@@ -162,8 +162,22 @@ own `[eink]` settings (e.g. `invert`) are preserved across every mode.
 | `writing` | 30 | 4 | 1.5 | 32 | every 300 s | Min latency; few levels = crisp, cheap text updates |
 | `video` | 30 | 16 | 0.0 | 64 | never | Motion; no sharpen halos, no interrupting redraws |
 
-All built-ins use Bayer dithering. Runtime switching between modes (`papercast ctl`) is
-planned (M7) and will require a mode to be active at startup.
+All built-ins use Bayer dithering.
+
+**Switching at runtime.** `papercast run` opens a control socket; `papercast ctl` drives
+it — no need to restart, and it works whether or not you started with a `--mode`:
+
+```console
+$ papercast ctl mode writing   # switch mode (forces a clean full redraw)
+$ papercast ctl mode reading
+$ papercast ctl refresh         # force a full redraw now (clear e-ink ghosting)
+$ papercast ctl status          # print the effective mode/fps/levels/dither/…
+```
+
+Wayland has no global-hotkey API, so bind these to compositor shortcuts. In COSMIC:
+Settings → Keyboard → Custom Shortcuts, e.g. `Super+F2` → `papercast ctl mode writing`,
+`Super+F3` → `papercast ctl mode reading`, `Super+F4` → `papercast ctl refresh`. The
+socket is `$XDG_RUNTIME_DIR/papercast.sock` (user-only; loopback-equivalent).
 
 You can override a built-in or define your own mode with a `[modes.<name>]` table. It
 takes the same keys as `[eink]` (except `target-size`) plus the mirror-side `fps`,

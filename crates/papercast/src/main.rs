@@ -1,5 +1,6 @@
 mod commands;
 mod config;
+mod control;
 mod mode;
 mod pipeline_thread;
 
@@ -22,6 +23,8 @@ enum Command {
     Probe,
     /// Serve a frame source as a VNC session.
     Run(commands::run::RunArgs),
+    /// Control a running `papercast run`: switch mode, force refresh, status.
+    Ctl(commands::ctl::CtlArgs),
 }
 
 fn main() -> anyhow::Result<()> {
@@ -37,5 +40,6 @@ fn main() -> anyhow::Result<()> {
     match cli.command {
         Command::Probe => commands::probe::run(),
         Command::Run(args) => commands::run::run(args),
+        Command::Ctl(args) => commands::ctl::run(args),
     }
 }
