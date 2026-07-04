@@ -180,20 +180,24 @@ async fn dispatch(req: Request, ctx: &ServerCtx) -> Response {
     }
 }
 
-/// Switch mode under the lock, then broadcast the new effective settings. The
-/// serve loop reacts (full redraw); the source re-paces off `fps_tx`.
+/// Switch mode and broadcast the new effective settings — all under the state
+/// lock, so a config save racing this switch can't interleave and leave a watch
+/// channel carrying stale settings. `watch::Sender::send` is synchronous (no
+/// await), so holding the std `Mutex` across it is safe. The serve loop reacts
+/// (full redraw); the source re-paces off `fps_tx`.
 fn apply_mode(ctx: &ServerCtx, name: &str) -> Result<Status, String> {
     let (mode, effective) = {
         let mut state = ctx.state.lock().map_err(|_| "mode state poisoned".to_string())?;
         let old = state.active().map(str::to_string);
         state.set_mode(name).map_err(|e| e.to_string())?;
         info!("mode {} -> {name} (via ctl)", old.as_deref().unwrap_or("none"));
-        (state.active().map(str::to_string), state.effective())
+        let effective = state.effective();
+        // Send fps first so the source is already re-paced by the time the
+        // serve loop redraws.
+        let _ = ctx.fps_tx.send(effective.fps);
+        let _ = ctx.settings_tx.send(effective.clone());
+        (state.active().map(str::to_string), effective)
     };
-    // Send fps first so the source is already re-paced by the time the serve
-    // loop redraws.
-    let _ = ctx.fps_tx.send(effective.fps);
-    let _ = ctx.settings_tx.send(effective.clone());
     Ok(status_from(ctx, mode, &effective))
 }
 

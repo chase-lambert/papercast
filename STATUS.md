@@ -81,7 +81,8 @@ Decisions locked in for Phase 1 (from design review):
 | `cde6e75` | M8: `DitherMode::Atkinson` (error diffusion, 6/8 spread), `--dither atkinson` + `dither = "atkinson"`, hand-computed unit test |
 | `e1eb265` | docs: CLI/README/STATUS wording fixes after design review |
 | `513fe65` | M7a: dynamic pacing at the source (widened `watch<ModeSettings>` + fps-only `watch<u32>` into the capture crate); deleted serve-loop dropping + `max_fps`/`mode_active` split |
-| _this_ | M7b+c: control socket + `papercast ctl` (mode/refresh/status), shared `Arc<Mutex<ModeState>>`, graceful shutdown, `tools/rfb_mode_check.py` |
+| `9efca0d` | M7b+c: control socket + `papercast ctl` (mode/refresh/status), shared `Arc<Mutex<ModeState>>`, graceful shutdown, `tools/rfb_mode_check.py` |
+| _this_ | M7.1: lock-scoped watch sends in both mutators (race fix), idle-screen redraw limitation documented |
 
 ### M7 progress (control socket + runtime switching — redesigned per review)
 
@@ -121,6 +122,17 @@ bug we removed would have throttled writing to ~15 (below the ceiling), so the t
 asserts writing ≥ 18 as the regression guard. The true 30 fps needs either a server fix
 (candidate for M16 upstream) or the Phase 2 custom protocol (no such cap). Flagging for
 review — is a rustvncserver pacing fix worth pulling earlier?
+**M7.1 (review follow-up) — DONE.** Both mutators (`control::apply_mode`, the
+config watcher) now recompute `effective()` *and* send the watch channels under
+the `ModeState` lock, so a config save racing a `ctl mode` switch can't interleave
+and leave a channel carrying stale settings (`watch::Sender::send` is sync — no
+await across the std `Mutex`). The watcher also compares against the channels'
+current values (`settings_tx.borrow()` / `fps_tx.borrow()`) instead of a private
+`last_sent` cache that a `ctl` switch would leave stale. Documented the known
+idle-screen limitation (a switch on a fully idle screen resends old-settings
+pixels until the next damage-driven frame; pipeline-caches-last-raw-frame is the
+eventual fix, Phase 1 backlog).
+
 - **M8 done, but Atkinson is NOT yet any mode's default** (design pt 8: visual-gate
   first). It's opt-in via `dither = "atkinson"`. Before making it the `reading` default,
   compare against Bayer with `--save-frame` PNGs and a live viewer check, then flip the

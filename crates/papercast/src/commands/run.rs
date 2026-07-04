@@ -370,6 +370,14 @@ async fn serve(args: RunArgs) -> anyhow::Result<()> {
             // frames arriving). Rebuild the tiler on a tile-size change (its
             // full-frame first diff doubles as the switch redraw); otherwise
             // force one full refresh since levels/dither changed globally.
+            //
+            // Known limitation (Phase 1 backlog): on a *fully idle* screen this
+            // redraw resends the framebuffer's current pixels, which were
+            // processed under the *old* levels/dither — the new look only
+            // appears once the next damage-driven frame flows through the
+            // pipeline (any cursor movement triggers it). The fix is for the
+            // pipeline to cache the last raw frame and reprocess it on a
+            // settings change; deferred until it's worth the memory.
             Ok(()) = settings_rx.changed() => {
                 let next = settings_rx.borrow_and_update().clone();
                 if next.tile_size != current.tile_size {
@@ -531,7 +539,6 @@ fn spawn_config_watcher(
             }
             info!("hot-reload active: edit {} while running", path.display());
 
-            let mut last_sent = state.lock().expect("mode state poisoned").effective();
             for event in raw_rx {
                 let Ok(event) = event else { continue };
                 let ours = event.paths.iter().any(|p| p.file_name() == path.file_name());
@@ -548,24 +555,28 @@ fn spawn_config_watcher(
                         continue;
                     }
                 };
-                // Update the base under the lock; the active mode's overlay is
-                // re-applied by `effective()`, so the mode is never dropped.
-                let effective = {
-                    let mut st = state.lock().expect("mode state poisoned");
-                    if base_eink == *st.base_eink() {
-                        continue; // no change to the base config
-                    }
-                    st.set_base_eink(base_eink);
-                    st.effective()
-                };
-                if effective == last_sent {
-                    continue; // overlay masked the change
+                // Recompute the effective settings and broadcast them — all
+                // under the state lock, so a concurrent `ctl mode` switch can't
+                // interleave with us and leave a channel carrying stale
+                // settings. The reloaded `[eink]` is the *base*; `effective()`
+                // re-applies the active mode's overlay, so the mode is never
+                // dropped. Compare against what the channels currently carry
+                // (not a private snapshot — a `ctl mode` switch would leave that
+                // stale) so an overlay-masked or already-current change is a
+                // no-op. `watch::Sender::send` is sync (no await), safe here.
+                let mut st = state.lock().expect("mode state poisoned");
+                if base_eink == *st.base_eink() {
+                    continue; // base config unchanged
+                }
+                st.set_base_eink(base_eink);
+                let effective = st.effective();
+                if effective == *settings_tx.borrow() {
+                    continue; // overlay masked the change, or already current
                 }
                 info!("config changed, applying [eink] update");
-                if effective.fps != last_sent.fps && fps_tx.send(effective.fps).is_err() {
+                if effective.fps != *fps_tx.borrow() && fps_tx.send(effective.fps).is_err() {
                     return; // capture gone
                 }
-                last_sent = effective.clone();
                 if settings_tx.send(effective).is_err() {
                     return; // pipeline/serve gone
                 }
