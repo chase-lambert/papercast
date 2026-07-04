@@ -35,7 +35,12 @@ clean redraws). This is where PaperCast beats generic mirroring. VNC stays as a 
 transport.
 
 - A small `papercast-proto` crate (framing + message types) plus a host sender.
-- A Kotlin receiver (`android/`), testable in an emulator before hardware, then
+  Designed to cross-compile for Android (NDK) so the receiver links it directly
+  rather than reimplementing the protocol.
+- A receiver structured as a **thin Kotlin shell over the Rust core (JNI)**: the
+  Kotlin side is just Activity, SurfaceView, socket lifecycle, and the Onyx SDK
+  EPD calls (which are Android-native and unavoidable in Kotlin/Java); protocol
+  and frame decode stay in Rust. Testable in an emulator before hardware, then
   Onyx-SDK refresh-mode integration on the Boox Tab X C.
 - Pull-based flow control (client requests the next frame) so a slow EPD never builds a
   latency queue.
