@@ -50,8 +50,9 @@ pub struct RunArgs {
     pub output: Option<String>,
 
     /// Display mode: reading | browsing | writing | video (or a custom mode
-    /// from config). Omit for plain base config (current behavior). Selecting
-    /// a mode also enables runtime switching via `papercast ctl mode <name>`.
+    /// from config). Omit for plain base config (current behavior). Runtime
+    /// switching (`papercast ctl`) is planned and will require a mode active
+    /// at startup.
     #[arg(long)]
     pub mode: Option<String>,
 

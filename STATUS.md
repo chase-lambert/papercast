@@ -95,9 +95,13 @@ Decisions locked in for Phase 1 (from design review):
   clone, updates the base `[eink]`, and pushes the *effective* eink — so editing the file
   never drops the active mode's overlay. The watch channel still carries `EinkConfig`.
 - **M7 will:** widen the watch channel to `ModeSettings`, add the Unix control socket +
-  `papercast ctl` (mode/refresh/status), and share one `ModeState` between the socket and
-  the config watcher so both feed the same manager. The serve loop must then re-read
-  fps/tile/refresh from the channel (currently read once at startup).
+  `papercast ctl` (mode/refresh/status), and share **one** `ModeState` between the socket
+  and the config watcher so both feed the same manager. The serve loop must then re-read
+  fps/tile/refresh from the channel (currently read once at startup). Do **not** build M7
+  on the current setup as-is — the config watcher today gets a *clone* of `ModeState`
+  (fine for fixed startup modes) and the serve loop reads tile/fps/refresh once. If M7
+  keeps that, `ctl mode` and config hot-reload will operate on separate copies and
+  diverge. The single shared manager is the fix.
 - **M8 done, but Atkinson is NOT yet any mode's default** (design pt 8: visual-gate
   first). It's opt-in via `dither = "atkinson"`. Before making it the `reading` default,
   compare against Bayer with `--save-frame` PNGs and a live viewer check, then flip the
@@ -111,8 +115,9 @@ Decisions locked in for Phase 1 (from design review):
 - Upstream the rustvncserver variable-length message parser fix.
 - Live resize on output mode change; use capture damage to pre-narrow processing/diffing;
   damage passthrough when scaling; rotated outputs.
-- Phase 1 (custom protocol + Kotlin/Onyx receiver), Phase 2 (wgpu, virtual display).
-- Pick a license (leaning Apache-2.0/MIT dual; vendored code is Apache-2.0).
+- Remaining phases (see `docs/ROADMAP.md`): finish Phase 1 (M7 runtime mode switching),
+  then Phase 2 (custom protocol + Kotlin/Onyx receiver), then Phase 3 (portal backend,
+  extended display, wgpu, upstreaming).
 
 ## Context for a fresh session
 
