@@ -16,15 +16,15 @@ This is the committed regression check for Phase 1 display modes. It:
       - the update cadence tracks the mode fps.
 
 Note on the writing-mode target: the vendored rustvncserver quantizes its
-continuous-update pushes to a 16 ms check tick against a 33 ms min-interval, so
-its first eligible send lands at ~48 ms — a hard ~20 fps delivery ceiling over
-VNC, independent of the source fps. Reading (5) and browsing (15) sit under that
-ceiling and are measured accurately; writing (source 30) saturates it at ~20.
-That is still the regression test for the serve-loop jitter bug: with the bug,
-writing was throttled to ~15 fps (halved), clearly *below* the server ceiling,
-so asserting writing reaches ~20 catches a regression. (Removing the ceiling
-needs a server fix — tracked for M16 upstream — or the Phase 2 custom protocol,
-which has no such cap.)
+continuous-update pushes to a check tick against a min send-interval. As shipped
+upstream (16 ms tick / 33 ms interval) that capped delivery at ~20 fps; the M8.5
+pacing patch (8 ms tick / 30 ms interval, see vendor/.../VENDORED.md) lifts the
+ceiling to ~31 fps, so writing's 30 fps source is now observable. Reading (5) and
+browsing (15) sit well under the ceiling and are measured accurately. Writing is
+also the regression test for the serve-loop jitter bug: with that bug writing was
+throttled to ~15 fps (halved), so asserting writing reaches ~27 catches both a
+jitter regression and a revert of the pacing patch. (The Phase 2 custom protocol
+has no such cap at all.)
 
 Usage:
     tools/rfb_mode_check.py [--papercast target/debug/papercast] [--port 5911]
@@ -200,10 +200,11 @@ def main():
                 failures.append(f"{mode}: no full-frame redraw after switch "
                                 f"(max coverage {max_frac:.2f})")
 
-        # writing is the regression case: source 30 fps saturates the server's
-        # ~20 fps ceiling. The jitter bug throttled it to ~15 (below browsing),
-        # so requiring >= 18 catches it.
-        check("writing", 18, 24, ">=18, server-capped ~20")
+        # writing is the regression case: with the M8.5 pacing patch the server
+        # ceiling is ~31 fps, so a 30 fps source is nearly fully delivered. The
+        # jitter bug throttled it to ~15 (below browsing) and a pacing-patch
+        # revert drops it to ~20, so requiring >= 27 catches either.
+        check("writing", 27, 34, ">=27, server-capped ~31")
         check("reading", 3.5, 7, "~5")
         check("browsing", 12, 18, "~15")
 

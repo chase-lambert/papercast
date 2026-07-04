@@ -521,7 +521,12 @@ impl VncClient {
         const MAX_CUT_TEXT: usize = 10 * 1024 * 1024; // 10MB limit
 
         let mut buf = BytesMut::with_capacity(4096);
-        let mut check_interval = tokio::time::interval(tokio::time::Duration::from_millis(16)); // Check for updates ~60 times/sec
+        // PaperCast patch (pacing, see VENDORED.md): 16 -> 8 ms check tick. At
+        // 16 ms this tick quantizes continuous-update pushes so coarsely that,
+        // together with the min-interval below and one wasted "start deferring"
+        // tick, the first send lands at ~48 ms (~20 fps ceiling) and every
+        // update carries 16-32 ms of quantization latency. 8 ms halves both.
+        let mut check_interval = tokio::time::interval(tokio::time::Duration::from_millis(8)); // Check for updates ~120 times/sec
 
         loop {
             tokio::select! {
@@ -821,7 +826,11 @@ impl VncClient {
                                     let elapsed = now.duration_since(defer_start);
                                     let last_sent = *self.last_update_sent.read().await;
                                     let time_since_last = now.duration_since(last_sent);
-                                    let min_interval = Duration::from_millis(33); // ~30 FPS max
+                                    // PaperCast patch (pacing, see VENDORED.md):
+                                    // 33 -> 30 ms. With the 8 ms tick above this
+                                    // lifts the delivery ceiling from ~20 to ~31
+                                    // fps, so writing mode's 30 fps is observable.
+                                    let min_interval = Duration::from_millis(30); // ~33 FPS max
 
                                     elapsed >= self.defer_update_time && time_since_last >= min_interval
                                 }

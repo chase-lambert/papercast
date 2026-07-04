@@ -21,6 +21,14 @@ issue/PR exists for this as of 2026-07.
   following data to be parsed as a bogus message type. The parser now waits for
   the complete message before advancing the buffer. Found during TigerVNC live
   validation (Phase 0, M4).
+- `src/client.rs`: continuous-update **pacing** — the update-check tick was
+  16 ms and the min send-interval 33 ms. Combined with one wasted "start
+  deferring" tick, the first push after a frame landed at ~48 ms: a hard
+  ~20 fps delivery ceiling (independent of source fps) plus 16-32 ms of
+  quantization latency on every update. Lowered the tick to 8 ms and the
+  min-interval to 30 ms → ~31 fps ceiling, so writing mode's 30 fps target is
+  actually observable and pen latency drops. Found while building
+  `tools/rfb_mode_check.py` (Phase 1, M8.5).
 
 ## Licensing
 
@@ -38,7 +46,9 @@ patched locally.
 
 ## TODO (upstreaming — see roadmap M16)
 
-Send both changes upstream as PRs: (a) the `listen` address change
-(backwards-compatible variant: add `listen_addr()` alongside `listen()`), and
-(b) the `SetEncodings`/`ClientCutText` parser fix. Drop this vendored copy and
-return to the crates.io release once merged.
+Send all three changes upstream as PRs: (a) the `listen` address change
+(backwards-compatible variant: add `listen_addr()` alongside `listen()`),
+(b) the `SetEncodings`/`ClientCutText` parser fix, and (c) the continuous-update
+pacing fix (tick 16→8 ms, min-interval 33→30 ms; upstream may prefer these as
+tunables rather than hardcoded constants). Drop this vendored copy and return to
+the crates.io release once merged.

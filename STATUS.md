@@ -82,7 +82,8 @@ Decisions locked in for Phase 1 (from design review):
 | `e1eb265` | docs: CLI/README/STATUS wording fixes after design review |
 | `513fe65` | M7a: dynamic pacing at the source (widened `watch<ModeSettings>` + fps-only `watch<u32>` into the capture crate); deleted serve-loop dropping + `max_fps`/`mode_active` split |
 | `9efca0d` | M7b+c: control socket + `papercast ctl` (mode/refresh/status), shared `Arc<Mutex<ModeState>>`, graceful shutdown, `tools/rfb_mode_check.py` |
-| _this_ | M7.1: lock-scoped watch sends in both mutators (race fix), idle-screen redraw limitation documented |
+| `612b349` | M7.1: lock-scoped watch sends in both mutators (race fix), idle-screen redraw limitation documented |
+| _this_ | M8.5: vendored VNC continuous-update pacing patch (tick 16→8 ms, min-interval 33→30 ms, ~20→~31 fps); tightened `rfb_mode_check.py` writing assertion ≥18→≥27 |
 
 ### M7 progress (control socket + runtime switching — redesigned per review)
 
@@ -113,15 +114,17 @@ serve-loop pacing (jitter bug + wasted CPU). New design paces **at the source**.
   - `tools/rfb_mode_check.py`: RFB client (ContinuousUpdates) + `ctl`, asserts per-mode
     cadence and a full-frame redraw after each switch. **Passes.**
 
-**Finding while writing the regression test — the ~30 fps writing target is not
-observable over VNC.** The vendored rustvncserver quantizes continuous-update pushes to
-its 16 ms check tick vs a 33 ms min-interval, so the first eligible send lands at ~48 ms
-→ a hard **~20 fps delivery ceiling** over VNC, independent of source fps (reading/browsing
-sit under it and measure accurately; writing saturates it at ~20). The serve-loop jitter
-bug we removed would have throttled writing to ~15 (below the ceiling), so the tool
-asserts writing ≥ 18 as the regression guard. The true 30 fps needs either a server fix
-(candidate for M16 upstream) or the Phase 2 custom protocol (no such cap). Flagging for
-review — is a rustvncserver pacing fix worth pulling earlier?
+**~20 fps VNC delivery ceiling — found writing the regression test, RESOLVED in
+M8.5.** The vendored rustvncserver quantized continuous-update pushes to a 16 ms check
+tick vs a 33 ms min-interval, so (with one wasted "start deferring" tick) the first send
+landed at ~48 ms → a hard ~20 fps delivery ceiling over VNC plus 16-32 ms of quantization
+latency on every update — which hurts writing-mode pen latency, not just throughput. The
+reviewer approved pulling the fix forward as **M8.5** (before M9, the "is VNC good enough
+daily?" decision point, so the ceiling doesn't bias that call). The patch is two constants
+(tick 16→8 ms, min-interval 33→30 ms ⇒ ~31 fps), documented as the third vendored patch
+and folded into the M16 upstream PR. Measured after the patch: writing 29 fps (was ~20),
+reading 5.5, browsing 14.5. The tool's writing assertion tightened ≥18 → ≥27, which now
+catches both the serve-loop jitter regression (~15) and a revert of the pacing patch (~20).
 **M7.1 (review follow-up) — DONE.** Both mutators (`control::apply_mode`, the
 config watcher) now recompute `effective()` *and* send the watch channels under
 the `ModeState` lock, so a config save racing a `ctl mode` switch can't interleave
