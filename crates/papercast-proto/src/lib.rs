@@ -161,13 +161,17 @@ pub fn encode(msg: &Message) -> Vec<u8> {
         }
         Message::Update(u) => (tag::UPDATE, encode_update(u)),
         Message::ModeChanged(name) => {
-            let bytes = name.as_bytes();
-            // name_len is a u8; mode names are short. Truncate defensively
-            // rather than corrupt the frame with a wrapped length.
-            let n = bytes.len().min(u8::MAX as usize);
+            // name_len is a u8; mode names are short. If one somehow exceeds 255
+            // bytes, truncate defensively — but to a char boundary, so we never
+            // emit a split UTF-8 sequence the decoder would reject.
+            let n = if name.len() <= u8::MAX as usize {
+                name.len()
+            } else {
+                (0..=u8::MAX as usize).rev().find(|&i| name.is_char_boundary(i)).unwrap_or(0)
+            };
             let mut p = Vec::with_capacity(1 + n);
             p.push(n as u8);
-            p.extend_from_slice(&bytes[..n]);
+            p.extend_from_slice(&name.as_bytes()[..n]);
             (tag::MODE_CHANGED, p)
         }
         Message::ClientHello { proto_version } => (tag::CLIENT_HELLO, vec![*proto_version]),

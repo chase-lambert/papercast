@@ -177,6 +177,15 @@ eventual fix, Phase 1 backlog).
   smoke test against the real binary (handshake, silent-before-Ready, full-frame Quality
   first paint at 320×240 → 1973 B, flow-control cycling). VNC path re-checked green via
   `rfb_mode_check.py`.
+- **M10 polish (review verdict 15) — DONE.** (1) Reconnect stale-Ready: `Sink` carries
+  a generation bumped in `attach()`; each `Ready` is tagged with the generation it was
+  read under and ignored if stale, so a replaced client's in-flight `Ready` can't trigger
+  an unrequested `Update` to the new client. (2) Client read buffer capped at 1 KB (legit
+  client messages are ≤ 6 bytes; `adb reverse` exposes the port to any tablet app, so
+  larger is treated as malformed and dropped). (3) `ModeChanged` de-duplicated via a
+  last-sent-name check, so a config edit that keeps the active mode no longer re-announces
+  it. Plus the cosmetic proto nit: the 255-byte name truncation now floors to a UTF-8 char
+  boundary. All verified (51 tests, clippy-clean, end-to-end re-smoke green).
 - **Noted (pre-existing, not M10):** the test-pattern source panics with a subtract
   overflow for framebuffers shorter than ~64 px (box size exceeds the band). Harmless at
   real sizes; worth a clamp when convenient.

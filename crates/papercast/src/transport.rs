@@ -45,13 +45,22 @@ pub async fn serve_proto(
 ) -> anyhow::Result<()> {
     let (fb_w, fb_h) = cfg.framebuffer;
     // `Ready` messages from whichever client is currently connected funnel back
-    // here so the loop can gate its sends on them.
-    let (ready_tx, mut ready_rx) = mpsc::channel::<()>(8);
+    // here so the loop can gate its sends on them. Each carries the connection
+    // generation it was read under, so a replaced client's in-flight Ready is
+    // recognizable and ignored.
+    let (ready_tx, mut ready_rx) = mpsc::channel::<u64>(8);
 
     let mut current = settings_rx.borrow_and_update().clone();
     let mut tiler = TileDiff::new(current.tile_size, 8);
     let mut updates_since_full: u64 = 0;
     let mut last_full = Instant::now();
+    // Suppress duplicate ModeChanged: a config edit re-applies the active mode's
+    // overlay without changing its name, so only announce actual name changes.
+    let mut last_mode_sent = cfg
+        .mode_state
+        .lock()
+        .ok()
+        .and_then(|s| s.active().map(str::to_string));
     let mut sink = Sink::new(fb_w, fb_h);
 
     loop {
@@ -63,8 +72,8 @@ pub async fn serve_proto(
                 let (stream, peer) = accepted.context("papercast transport accept failed")?;
                 debug!("papercast client connected from {peer}");
                 let (read, write) = stream.into_split();
-                tokio::spawn(client_reader(read, ready_tx.clone()));
                 sink.attach(write);
+                tokio::spawn(client_reader(read, ready_tx.clone(), sink.generation));
                 let levels = cfg
                     .mode_state
                     .lock()
@@ -80,10 +89,14 @@ pub async fn serve_proto(
                 sink.pending_full = true;
             }
 
-            // Client is ready for the next update.
-            Some(()) = ready_rx.recv() => {
-                sink.ready = true;
-                sink.flush().await;
+            // Client is ready for the next update. Ignore a Ready from a stale
+            // generation — a client being replaced can leave one last Ready in
+            // flight that the new client never requested.
+            Some(gen) = ready_rx.recv() => {
+                if gen == sink.generation {
+                    sink.ready = true;
+                    sink.flush().await;
+                }
             }
 
             // A processed frame arrived: diff it into changed rects, keep the
@@ -133,8 +146,11 @@ pub async fn serve_proto(
                     .lock()
                     .ok()
                     .and_then(|s| s.active().map(str::to_string));
-                if let Some(name) = name {
-                    sink.send(&Message::ModeChanged(name)).await;
+                if name != last_mode_sent {
+                    if let Some(n) = name.clone() {
+                        sink.send(&Message::ModeChanged(n)).await;
+                    }
+                    last_mode_sent = name;
                 }
                 sink.pending_full = true;
                 last_full = Instant::now();
@@ -171,19 +187,33 @@ struct Sink {
     /// Last full processed frame, so a full repaint can be sent even when no new
     /// frame is arriving (idle screen).
     last_frame: Option<Vec<u8>>,
+    /// Incremented on every reconnect; a `Ready` carrying an older generation
+    /// belongs to a client we've since replaced and is ignored.
+    generation: u64,
     fb_w: u16,
     fb_h: u16,
 }
 
 impl Sink {
     fn new(fb_w: u16, fb_h: u16) -> Self {
-        Self { client: None, ready: false, pending_full: false, latest: None, last_frame: None, fb_w, fb_h }
+        Self {
+            client: None,
+            ready: false,
+            pending_full: false,
+            latest: None,
+            last_frame: None,
+            generation: 0,
+            fb_w,
+            fb_h,
+        }
     }
 
-    /// Replace the current client (a second connection supersedes the first).
+    /// Replace the current client (a second connection supersedes the first),
+    /// bumping the generation so the old client's stray `Ready`s are ignored.
     fn attach(&mut self, write: OwnedWriteHalf) {
         self.client = Some(write);
         self.ready = false;
+        self.generation += 1;
     }
 
     /// Write one message; drop the client on I/O error. Returns whether the
@@ -232,13 +262,21 @@ impl Sink {
 
 /// Parse messages from one client, forwarding each `Ready` to the serve loop.
 /// Ends on EOF, malformed input, or when the loop is gone.
-async fn client_reader(mut read: OwnedReadHalf, ready_tx: mpsc::Sender<()>) {
-    let mut buf: Vec<u8> = Vec::with_capacity(256);
-    let mut chunk = [0u8; 1024];
+async fn client_reader(mut read: OwnedReadHalf, ready_tx: mpsc::Sender<u64>, generation: u64) {
+    // Legitimate client messages are tiny (Ready is 5 bytes, ClientHello 6), so
+    // a buffer that grows past this is a stuck or hostile peer. `adb reverse`
+    // exposes this port to any app on the tablet, so cap it and drop.
+    const MAX_CLIENT_BUF: usize = 1024;
+    let mut buf: Vec<u8> = Vec::with_capacity(64);
+    let mut chunk = [0u8; 256];
     loop {
         match read.read(&mut chunk).await {
             Ok(0) | Err(_) => return,
             Ok(n) => buf.extend_from_slice(&chunk[..n]),
+        }
+        if buf.len() > MAX_CLIENT_BUF {
+            warn!("papercast client exceeded {MAX_CLIENT_BUF}-byte read buffer; dropping");
+            return;
         }
         loop {
             match papercast_proto::decode(&buf) {
@@ -247,7 +285,7 @@ async fn client_reader(mut read: OwnedReadHalf, ready_tx: mpsc::Sender<()>) {
                     // Ready is the only client message that drives us; ClientHello
                     // carries just a version and anything else is unexpected but
                     // harmless, so both are ignored.
-                    if msg == Message::Ready && ready_tx.send(()).await.is_err() {
+                    if msg == Message::Ready && ready_tx.send(generation).await.is_err() {
                         return; // serve loop gone
                     }
                 }
