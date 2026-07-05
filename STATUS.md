@@ -136,10 +136,19 @@ idle-screen limitation (a switch on a fully idle screen resends old-settings
 pixels until the next damage-driven frame; pipeline-caches-last-raw-frame is the
 eventual fix, Phase 1 backlog).
 
-- **M8 done, but Atkinson is NOT yet any mode's default** (design pt 8: visual-gate
-  first). It's opt-in via `dither = "atkinson"`. Before making it the `reading` default,
-  compare against Bayer with `--save-frame` PNGs and a live viewer check, then flip the
-  built-in `reading` overlay in `mode.rs`.
+- **M8 visual gate — DONE; default stays Bayer, decision deferred to M9.** Compared
+  Bayer vs Atkinson `--save-frame` PNGs at `reading` settings (16 levels, sharpen 1.0).
+  Findings: Atkinson wins on static reading content (smoother tonal gradients; flat
+  mid-gray goes near-solid vs Bayer's ordered crosshatch; text/line-gratings identical).
+  Bayer wins on temporal stability — it's coordinate-anchored, so unchanged pixels
+  re-dither identically; Atkinson is order-dependent and can re-dither/shimmer under
+  partial updates (scroll/type). `reading` mode's full-refresh-per-change largely masks
+  that, making Atkinson a plausible *reading-only* default — but not for browsing/writing/
+  video. Verdict: an LCD PNG can't settle it (EPD ghosting/refresh-mode/Boox pipeline
+  change the outcome), so **Bayer remains the default and Atkinson stays opt-in; A/B the
+  two on the actual Boox at M9, then decide.** The experiment is pre-written (commented
+  `[modes.reading] dither = "atkinson"`) in `boox-tab-x-c.toml`. Flip = one line in the
+  built-in `reading` overlay in `mode.rs` if M9 confirms it.
 
 ## After Phase 0 (backlog, see README roadmap)
 

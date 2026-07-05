@@ -13,7 +13,7 @@ white-point = 248
 invert = false          # set true if your desktop theme is dark
 sharpen = 1.2           # 300 ppi rewards extra edge crispness
 sharpen-radius = 1
-dither = "bayer"
+dither = "bayer"        # coordinate-anchored → stable under partial updates (see the reading experiment below)
 levels = 16             # the panel's native grayscale depth
 fit = "letterbox"
 target-size = [3200, 2400]
@@ -25,3 +25,21 @@ fps = 15
 tile-size = 64
 full-refresh-secs = 60      # periodic ghost-clearing full redraw
 full-refresh-updates = 0
+
+# --- M9 experiment: Atkinson dithering for reading mode ---
+# On LCD stills (M8 visual gate), Atkinson error-diffusion beats Bayer for
+# static reading content: smoother tonal gradients, and flat backgrounds go
+# nearly solid instead of Bayer's fine crosshatch. Its weakness is temporal —
+# error diffusion is order-dependent, so a tiny input change can re-dither
+# neighboring pixels and shimmer under partial updates (scrolling, typing).
+# `reading` mode full-refreshes on every change, which largely masks that, so
+# it's the one mode where Atkinson is a plausible default.
+#
+# But an LCD showing a PNG isn't the judge — EPD ghosting, the panel's refresh
+# mode, and Boox's own dithering pipeline can all change the outcome. So Bayer
+# stays the default until this is A/B'd on the actual tablet. To run that test,
+# uncomment below: this overlay merges on top of the built-in `reading` mode
+# (which otherwise forces bayer), so `papercast ctl mode reading` uses Atkinson.
+#
+# [modes.reading]
+# dither = "atkinson"

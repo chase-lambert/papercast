@@ -23,9 +23,13 @@ VNC viewer.
 - **Runtime switching.** PaperCast exposes a Unix control socket; `papercast ctl`
   changes the active mode, forces a full "clear ghosts" refresh, or reports status.
   Bind compositor shortcuts to these commands for hotkey-style switching.
-- **Atkinson dithering.** Error-diffusion variant that reads lighter and crisper than
-  Floyd–Steinberg for text/UI on e-ink; added as an option, gated on visual comparison
-  before becoming any mode's default.
+- **Atkinson dithering.** Error-diffusion variant that renders smoother gradients and
+  cleaner flat backgrounds than ordered Bayer on static content; added as an option. A
+  visual comparison at `reading` settings found Atkinson better for static reading but
+  less stable than coordinate-anchored Bayer under partial updates, so Bayer stays the
+  default — the `reading`-mode default flip is deferred to an on-device Bayer-vs-Atkinson
+  A/B during Boox validation, since an EPD's ghosting and refresh behavior can change the
+  verdict.
 
 ## Phase 2 — custom protocol + Android/Onyx receiver
 
