@@ -214,6 +214,46 @@ eventual fix, Phase 1 backlog).
   `cargo-ndk` `.so` build — deferred to the next commit(s), since neither is
   host-testable and both need the NDK toolchain (setup steps below).
 
+## NDK / cargo-ndk toolchain setup (needed for M11a `.so` builds + M11b)
+
+Install these in parallel — none is needed for the M11a host tests (already green),
+but all are required before the receiver core can be cross-compiled and loaded by the
+Kotlin shell. Nothing here is installed on this box yet; these are the steps to run,
+not a report that they ran.
+
+1. **Rust Android targets** (device + emulator):
+   ```console
+   $ rustup target add aarch64-linux-android x86_64-linux-android
+   ```
+   `aarch64-linux-android` is the real tablet (Boox/Daylight/other arm64 device);
+   `x86_64-linux-android` is the emulator used in M11b. (Add `armeabi-v7a`/`i686` only
+   if a 32-bit target ever appears — none is expected.)
+
+2. **cargo-ndk** (drives `cargo build` with the right NDK linker/sysroot per target):
+   ```console
+   $ cargo install cargo-ndk
+   ```
+
+3. **Android SDK + NDK.** Either install Android Studio (bundles the SDK, and the NDK
+   via SDK Manager → SDK Tools → "NDK (Side by side)"), or the command-line tools:
+   ```console
+   $ sdkmanager "platform-tools" "platforms;android-33" "ndk;<version>"
+   ```
+   Set `ANDROID_HOME` (SDK root) and `ANDROID_NDK_HOME`/`NDK_HOME` (the
+   `.../ndk/<version>` dir) so cargo-ndk finds the toolchain. `platform-tools`
+   provides `adb`, which is also the `adb reverse tcp:5920 tcp:5920` bridge the
+   receiver connects through — `adb` is still not installed on this box.
+
+Once installed, the M11a `.so` build looks like (target dir copied into the Kotlin
+app's `jniLibs/`):
+```console
+$ cargo ndk -t arm64-v8a -t x86_64 -o android/app/src/main/jniLibs \
+      build -p papercast-recv-core --features android --release
+```
+(cargo-ndk uses the Android ABI names `arm64-v8a`/`x86_64`, which map to the
+`aarch64`/`x86_64-linux-android` rustc targets above.) The `android` cargo feature
+is what pulls in `jni` and the JNI bindings; the host test build omits it.
+
 ## After Phase 0 (backlog, see README roadmap)
 
 - Tablet arrival: Boox USB-debugging + `adb reverse` + AVNC (README has the walkthrough).
