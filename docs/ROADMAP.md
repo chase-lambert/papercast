@@ -10,7 +10,7 @@ Wayland capture (`ext-image-copy-capture-v1`) → e-ink pipeline (grayscale, ton
 unsharp, scale, dither) → dirty-tile VNC on loopback, validated live against TigerVNC.
 The result is a *processed mirror*: correct, but not yet optimized for e-ink as a medium.
 
-## Phase 1 — e-ink display modes (host-side; no tablet required)
+## Phase 1 — e-ink display modes (done; host-side, no tablet required)
 
 Task-based display modes in the spirit of the Modos Flow monitor — **Reading**,
 **Browsing**, **Writing**, **Video** — each trading update speed against image quality
@@ -31,23 +31,38 @@ VNC viewer.
   A/B during Boox validation, since an EPD's ghosting and refresh behavior can change the
   verdict.
 
-## Phase 2 — custom protocol + Android/Onyx receiver
+## Phase 2 — custom protocol + native receiver (in progress)
 
-Replace the generic VNC viewer app with a minimal receiver that uses the Onyx SDK to
-control the EPD refresh mode per update (fast partial refresh for writing, full GC16 for
-clean redraws). This is where PaperCast beats generic mirroring. VNC stays as a fallback
-transport.
+Replace the generic VNC viewer app with a minimal receiver that controls the EPD refresh
+mode per update (fast partial refresh for writing, full GC16 for clean redraws). This is
+where PaperCast beats generic mirroring. VNC stays as a fallback transport.
 
-- A small `papercast-proto` crate (framing + message types) plus a host sender.
-  Designed to cross-compile for Android (NDK) so the receiver links it directly
-  rather than reimplementing the protocol.
-- A receiver structured as a **thin Kotlin shell over the Rust core (JNI)**: the
-  Kotlin side is just Activity, SurfaceView, socket lifecycle, and the Onyx SDK
-  EPD calls (which are Android-native and unavoidable in Kotlin/Java); protocol
-  and frame decode stay in Rust. Testable in an emulator before hardware, then
-  Onyx-SDK refresh-mode integration on the Boox Tab X C.
-- Pull-based flow control (client requests the next frame) so a slow EPD never builds a
-  latency queue.
+**Landed (host side):**
+
+- **`papercast-proto`** — framing + message types (hello / update / mode-changed /
+  ready), with per-rect Gray8 zstd-compressed. No I/O or async, so it cross-compiles for
+  Android (NDK) and the receiver links it directly rather than reimplementing the
+  protocol.
+- **Host sender** — `papercast run --transport papercast` serves the e-ink pipeline over
+  TCP (loopback `:5920`, bridged with `adb reverse tcp:5920 tcp:5920`) with **pull-based
+  flow control**: the receiver requests each frame and the sender keeps only the newest,
+  so a slow EPD never builds a latency queue.
+- **`papercast-recv-core`** — the tablet-side receiver core as host-testable Rust (built
+  as a `cdylib` for Android). One native thread owns the connection, handshake, decode,
+  pull pacing, and reconnect, handing decoded frames to a sink; verified end-to-end
+  against the host sender over loopback.
+
+**Remaining:**
+
+- A **thin Kotlin shell** over the Rust core (JNI): Activity, SurfaceView, socket
+  lifecycle, and the device's EPD refresh calls; no protocol or decode logic in Kotlin.
+  Testable in an emulator before hardware.
+- **Device-neutral by design.** The core and protocol carry zero device-specific code;
+  refresh intent (Auto / Fast / Quality) passes through untouched. A small per-device
+  backend maps intent to a concrete waveform — Onyx/Boox (`EpdController`), Daylight, or a
+  `generic` fallback that simply draws — selected at runtime. The target device isn't
+  finalized (Boox Tab X C, Daylight DC-1, or another Android e-ink device), and the
+  architecture stays correct for any of them.
 
 ## Phase 3 — reach
 

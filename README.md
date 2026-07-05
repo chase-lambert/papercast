@@ -7,9 +7,11 @@ PaperCast captures a Wayland output, runs it through an e-ink-tuned image pipeli
 localhost. An Android e-ink tablet connected over USB reaches it through `adb reverse`,
 so nothing ever touches the network.
 
-**Status: Phase 0 (working MVP).** Live mirroring over VNC, testable with any desktop VNC
-viewer. Phases 1–2 (custom protocol with real e-ink refresh-mode control, GPU pipeline,
-virtual extended display) are roadmap — see [Roadmap](#roadmap).
+**Status: Phase 1 complete; Phase 2 in progress.** Live mirroring over VNC with runtime
+display modes (Reading / Browsing / Writing / Video) works today, testable with any
+desktop VNC viewer. Phase 2 — a custom pull-based transport for real per-region e-ink
+refresh control plus a native Android receiver — has its host side landed (wire protocol,
+sender, and receiver core); the tablet-side app is next. See [Roadmap](#roadmap).
 
 ```
 Wayland compositor ──ext-image-copy-capture──▶ e-ink pipeline ──▶ VNC :5900 (loopback)
@@ -67,6 +69,7 @@ $ papercast run --invert                    # dark desktop theme → black-on-pa
 $ papercast run --save-frame out.png        # dump processed frame #10 for inspection
 $ papercast run --latency-test              # stamp a ms counter on every frame
 $ papercast run --config papercast.toml     # config file; [eink] hot-reloads on save
+$ papercast run --transport papercast       # custom e-ink transport on :5920 (needs the native receiver — Phase 2, WIP)
 ```
 
 `papercast run --help` lists every knob. Precedence: built-in defaults < config file <
@@ -225,7 +228,7 @@ is exercised on every milestone.)
 
 ## How it works
 
-Cargo workspace, three crates plus one vendored dependency:
+Cargo workspace, five crates plus one vendored dependency:
 
 - **`papercast-core`** — the pixel pipeline, no I/O: BT.709 grayscale → tone LUT
   (black/white point, gamma, contrast, invert) → unsharp mask → scale (letterbox/crop/
@@ -236,14 +239,27 @@ Cargo workspace, three crates plus one vendored dependency:
   test pattern, and Wayland capture via **ext-image-copy-capture-v1** on a dedicated
   thread. Capture is damage-driven: the compositor only delivers frames when something
   changed, so an idle mirror costs ~zero CPU — a natural fit for e-ink.
+- **`papercast-proto`** — the custom transport's wire format: length-prefixed framing
+  and message types (hello / update / mode-changed / ready), with per-rect Gray8
+  zstd-compressed. No I/O and no async, so it cross-compiles to the Android NDK and the
+  receiver links it directly instead of reimplementing the protocol. Flow control is
+  **pull-based** — the client requests each frame — so a slow EPD never builds a latency
+  queue.
+- **`papercast-recv-core`** — the tablet-side receiver core: host-testable Rust, built as
+  a `cdylib` for Android. One native thread owns the TCP connection, handshake, decode
+  loop, pull pacing, and reconnect, handing decoded frames to a sink. It's
+  **device-neutral** — refresh intent (Auto / Fast / Quality) passes straight through;
+  mapping it to a concrete EPD waveform is the per-device backend's job in the Kotlin
+  shell, not the core's.
 - **`papercast`** — the binary: CLI, TOML config with hot-reload, pipeline thread, and
-  VNC serving. Dirty tiles become individual VNC rects; a timer forces periodic
-  full-frame updates to clear e-ink ghosting.
+  two output transports — VNC (default) and the custom `--transport papercast` sender.
+  Dirty tiles become individual rects; a timer forces periodic full-frame updates to
+  clear e-ink ghosting.
 - **`vendor/rustvncserver`** — [rustvncserver](https://crates.io/crates/rustvncserver)
-  2.2.1 (Apache-2.0) with two patches: a configurable bind address instead of hardcoded
-  `0.0.0.0`, and a fix to the variable-length `SetEncodings`/`ClientCutText` parser (found
-  during TigerVNC validation). See `vendor/rustvncserver/VENDORED.md`; both to be
-  upstreamed.
+  2.2.1 (Apache-2.0) with three patches: a configurable bind address instead of hardcoded
+  `0.0.0.0`, a fix to the variable-length `SetEncodings`/`ClientCutText` parser (found
+  during TigerVNC validation), and a continuous-update pacing fix (raising the ~20 fps
+  delivery ceiling to ~31). See `vendor/rustvncserver/VENDORED.md`; all to be upstreamed.
 
 ### Latency
 
@@ -257,12 +273,16 @@ GC16 — that's physics, not transport; USB adds single-digit milliseconds.
 
 Full roadmap: [`docs/ROADMAP.md`](docs/ROADMAP.md). In brief:
 
-- **Phase 1 — e-ink display modes (host-side, no tablet needed).** Modos-Flow-style
-  Reading / Browsing / Writing / Video modes over the existing VNC path, switchable at
-  runtime via a control socket (`papercast ctl`); Atkinson dithering.
-- **Phase 2 — custom protocol + Android/Onyx receiver.** A length-prefixed protocol and a
-  minimal Kotlin receiver using the Onyx SDK for per-region EPD refresh-mode control (A2
-  for typing, GC16 for full refreshes). VNC stays as a fallback.
+- **Phase 1 — e-ink display modes (done).** Modos-Flow-style Reading / Browsing /
+  Writing / Video modes over the VNC path, switchable at runtime via a control socket
+  (`papercast ctl`); Atkinson dithering available. All host-side, no tablet needed.
+- **Phase 2 — custom protocol + native receiver (in progress).** The pull-based wire
+  protocol (`papercast-proto`), the host sender (`--transport papercast`), and a
+  host-tested Rust receiver core (`papercast-recv-core`) are landed; the thin
+  Android/Kotlin shell that loads the core and drives per-region EPD refresh is next. The
+  receiver is **device-neutral**: refresh intent maps to a concrete waveform in a small
+  per-device backend (Onyx/Boox, Daylight, or a generic fallback), so the target device
+  isn't locked in. VNC stays the universal fallback transport.
 - **Phase 3 — reach.** Portal/PipeWire capture backend (GNOME/KDE); true extended display
   (not a mirror); wgpu compute pipeline; upstreaming the rustvncserver patches.
 
