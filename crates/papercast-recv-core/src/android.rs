@@ -57,72 +57,77 @@ impl JniSink {
     fn env(&self) -> jni::errors::Result<JNIEnv<'_>> {
         self.vm.attach_current_thread_as_daemon()
     }
+
+    /// Run one Java callback inside a fresh JNI local frame, so every local
+    /// reference it creates (the direct `ByteBuffer`, a `String`) is released
+    /// when the frame pops. This is mandatory here: the receiver thread is
+    /// natively attached and never returns to Java, so without a per-call frame
+    /// those refs accumulate until ART's local-reference table overflows and
+    /// aborts the process — within seconds at streaming rates.
+    fn invoke<F>(&self, f: F)
+    where
+        F: FnOnce(&mut JNIEnv, &GlobalRef) -> jni::errors::Result<()>,
+    {
+        let Ok(mut env) = self.env() else { return };
+        if env.with_local_frame(4, |env| f(env, &self.callback)).is_err() {
+            // A callback that threw leaves an exception pending on the thread;
+            // clear it so the next call's JNI operations start clean.
+            let _ = env.exception_clear();
+        }
+    }
 }
 
 impl FrameSink for JniSink {
     fn on_frame(&mut self, frame: FrameView<'_>) {
-        let Ok(mut env) = self.env() else { return };
-        // A direct ByteBuffer over the reused framebuffer — no pixel copy. The
-        // memory outlives this synchronous call; Java must not retain it.
-        let buf = match unsafe {
-            env.new_direct_byte_buffer(frame.pixels.as_ptr().cast_mut(), frame.pixels.len())
-        } {
-            Ok(b) => b,
-            Err(_) => return,
-        };
-        let r = env.call_method(
-            &self.callback,
-            "onFrame",
-            "(Ljava/nio/ByteBuffer;III)V",
-            &[
-                JValue::Object(&buf),
-                JValue::Int(i32::from(frame.width)),
-                JValue::Int(i32::from(frame.height)),
-                JValue::Int(i32::from(frame.refresh_hint.to_u8())),
-            ],
-        );
-        if r.is_err() {
-            let _ = env.exception_clear();
-        }
+        let (w, h) = (i32::from(frame.width), i32::from(frame.height));
+        let hint = i32::from(frame.refresh_hint.to_u8());
+        let ptr = frame.pixels.as_ptr().cast_mut();
+        let len = frame.pixels.len();
+        self.invoke(|env, callback| {
+            // A direct ByteBuffer over the reused framebuffer — no pixel copy.
+            // The memory outlives this synchronous call; Java must not retain it.
+            let buf = unsafe { env.new_direct_byte_buffer(ptr, len)? };
+            env.call_method(
+                callback,
+                "onFrame",
+                "(Ljava/nio/ByteBuffer;III)V",
+                &[JValue::Object(&buf), JValue::Int(w), JValue::Int(h), JValue::Int(hint)],
+            )?;
+            Ok(())
+        });
     }
 
     fn on_connect(&mut self, width: u16, height: u16, levels: u8) {
-        let Ok(mut env) = self.env() else { return };
-        let r = env.call_method(
-            &self.callback,
-            "onConnect",
-            "(III)V",
-            &[
-                JValue::Int(i32::from(width)),
-                JValue::Int(i32::from(height)),
-                JValue::Int(i32::from(levels)),
-            ],
-        );
-        if r.is_err() {
-            let _ = env.exception_clear();
-        }
+        let (w, h, l) = (i32::from(width), i32::from(height), i32::from(levels));
+        self.invoke(|env, callback| {
+            env.call_method(
+                callback,
+                "onConnect",
+                "(III)V",
+                &[JValue::Int(w), JValue::Int(h), JValue::Int(l)],
+            )?;
+            Ok(())
+        });
     }
 
     fn on_mode_changed(&mut self, name: &str) {
-        let Ok(mut env) = self.env() else { return };
-        let Ok(jname) = env.new_string(name) else { return };
-        let r = env.call_method(
-            &self.callback,
-            "onModeChanged",
-            "(Ljava/lang/String;)V",
-            &[JValue::Object(&jname)],
-        );
-        if r.is_err() {
-            let _ = env.exception_clear();
-        }
+        self.invoke(|env, callback| {
+            let jname = env.new_string(name)?;
+            env.call_method(
+                callback,
+                "onModeChanged",
+                "(Ljava/lang/String;)V",
+                &[JValue::Object(&jname)],
+            )?;
+            Ok(())
+        });
     }
 
     fn on_disconnect(&mut self) {
-        let Ok(mut env) = self.env() else { return };
-        let r = env.call_method(&self.callback, "onDisconnect", "()V", &[]);
-        if r.is_err() {
-            let _ = env.exception_clear();
-        }
+        self.invoke(|env, callback| {
+            env.call_method(callback, "onDisconnect", "()V", &[])?;
+            Ok(())
+        });
     }
 }
 

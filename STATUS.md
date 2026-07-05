@@ -219,7 +219,11 @@ eventual fix, Phase 1 backlog).
   **direct `ByteBuffer`** over the reused framebuffer (no pixel copy; valid only for the
   synchronous call, and returning is the pull back-pressure), plus `onConnect`/
   `onModeChanged`/`onDisconnect`. The receiver thread attaches to the JVM as a daemon on
-  first callback. The full Kotlin contract (class + interface + JNI signatures) is
+  first callback, and **every callback runs inside a `with_local_frame`** so the local
+  refs it creates (the `ByteBuffer`, the mode `String`) are freed per call — without it,
+  a natively-attached thread that never returns to Java would leak a local ref per frame
+  until ART's table overflows and aborts (caught in review; invisible to host checks).
+  The full Kotlin contract (class + interface + JNI signatures) is
   documented at the top of `android.rs`; the two lifecycle caveats are folded in there
   (`nativeStop` can block ~3 s mid-connect → call off the UI thread; `onDisconnect` fires
   on clean stop too). Verified: compiles + clippy-clean under `--features android` on the
