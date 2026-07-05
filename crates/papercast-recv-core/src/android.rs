@@ -37,7 +37,7 @@
 //! - `refreshHint`: 0 = Auto, 1 = Fast, 2 = Quality. Map it to a device waveform
 //!   in your `RefreshBackend`; the core never does.
 
-use jni::objects::{GlobalRef, JClass, JObject, JString, JValue};
+use jni::objects::{GlobalRef, JObject, JString, JValue};
 use jni::sys::jlong;
 use jni::{JNIEnv, JavaVM};
 
@@ -162,7 +162,7 @@ pub extern "system" fn Java_com_papercast_RecvCore_nativeStart<'local>(
 #[no_mangle]
 pub extern "system" fn Java_com_papercast_RecvCore_nativeStop(
     _env: JNIEnv,
-    _class: JClass,
+    _this: JObject,
     handle: jlong,
 ) {
     if handle == 0 {

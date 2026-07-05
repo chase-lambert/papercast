@@ -158,7 +158,9 @@ eventual fix, Phase 1 backlog).
 | `d68da43` | M10b: host sender behind `--transport vnc\|papercast`, pull-based flow control, loopback integration test |
 | `d169fcc` | M10 polish (verdict 15): reconnect generation guard, 1 KB client-buffer cap, `ModeChanged` dedup, UTF-8-safe truncation |
 | `4477897` | M11a: `papercast-recv-core` (receiver core, cdylib) — connect/handshake/decode/`Ready` pacing/reconnect on one native thread; host-tested against `serve_proto` |
-| _this_ | M11a JNI: `android`-feature JNI bindings (`RecvCore.nativeStart/nativeStop` + `FrameCallback`) and `scripts/build-recv-core.sh` cross-compiling both ABIs |
+| `e1238b7` | M11a JNI: `android`-feature JNI bindings (`RecvCore.nativeStart/nativeStop` + `FrameCallback`) and `scripts/build-recv-core.sh` cross-compiling both ABIs |
+| `7b28fd4` | M11a JNI: fix a JNI local-reference leak (per-callback `with_local_frame`) |
+| _this_ | M11b: thin Kotlin shell under `android/` (Activity + SurfaceView + `RefreshBackend`/generic), emulator-verified end to end |
 
 - **M10a — DONE.** New `crates/papercast-proto`: envelope `[u32 BE len][u8 type]
   [payload]`; messages ServerHello/Update/ModeChanged (server→client), ClientHello/
@@ -230,8 +232,26 @@ eventual fix, Phase 1 backlog).
   host; `cargo test --workspace` (feature off) still 53 green; `scripts/build-recv-core.sh`
   cross-compiles both ABIs and `llvm-nm` confirms both JNI symbols are exported (`T`) in
   the arm64 `.so`. The `.so`s land in `android/app/src/main/jniLibs/<abi>/` (gitignored —
-  build artifacts, not source). **Not yet run in a VM** — first real execution is the
-  M11b emulator bring-up.
+  build artifacts, not source).
+- **M11b thin Kotlin shell — DONE, emulator-verified.** `android/` is a Gradle project
+  (AGP 8.5.2, Gradle 8.7, Kotlin 1.9.24, minSdk 26 / targetSdk 33 / compileSdk 34, no
+  AndroidX — plain `android.app.Activity` over platform APIs). Five Kotlin files:
+  `RecvCore` (JNI declarations + `FrameCallback` interface matching `android.rs`),
+  `FrameRenderer` (the `FrameCallback` impl — copies the direct `ByteBuffer` out, expands
+  Gray8→ARGB into a reused bitmap, draws letterboxed to the `SurfaceView` off the UI
+  thread; returning drives the pull back-pressure), `RefreshBackend` (the device seam,
+  `generic` impl only, chosen by `Build.MANUFACTURER` with an intent-extra override and
+  `generic` fallback), and `MainActivity` (fullscreen immersive, keep-screen-on, connect
+  on resume / stop off the UI thread on pause). No protocol/decode logic in Kotlin.
+  **Verified end to end:** built the APK (both ABIs' `.so`s packaged), booted the
+  `pixel_tablet`/Android-14/x86_64 AVD, `adb reverse tcp:5920 tcp:5920`, ran
+  `papercast run --source test --transport papercast` (isolated `XDG_RUNTIME_DIR`), and
+  the dithered test pattern rendered and **updated live** with **no crash** across
+  sustained streaming (the leak fix holding). Build notes: AGP wants a JDK ≤ 21, so the
+  build uses `JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64` (the box's default is JDK 25);
+  `android/{.gradle,build,local.properties}` are gitignored; `android/README.md` documents
+  build + install including the `build-recv-core.sh` prerequisite. Not yet on real
+  hardware (M9/M12) — emulator only.
 
 ## NDK / cargo-ndk toolchain setup (needed for M11a `.so` builds + M11b)
 
