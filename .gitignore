@@ -1,1 +1,4 @@
 /target
+
+# Cross-compiled recv-core .so outputs (produced by scripts/build-recv-core.sh)
+/android/app/src/main/jniLibs/

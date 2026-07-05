@@ -26,6 +26,11 @@ use std::time::Duration;
 use papercast_proto::{decode, encode, Message, ServerHello, Update, PROTO_VERSION};
 use tracing::debug;
 
+/// JNI bindings for the Kotlin shell, behind the `android` feature so the host
+/// build/tests never pull `jni`.
+#[cfg(feature = "android")]
+mod android;
+
 /// Refresh intent for a delivered frame — re-exported so a consumer needs only
 /// this crate, not `papercast-proto`, to pattern-match on it.
 pub use papercast_proto::RefreshHint;

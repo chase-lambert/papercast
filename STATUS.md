@@ -157,7 +157,8 @@ eventual fix, Phase 1 backlog).
 | `b4514ff` | M10a: `papercast-proto` crate — framing + message types, no I/O/async, cross-compiles for the NDK (12 tests) |
 | `d68da43` | M10b: host sender behind `--transport vnc\|papercast`, pull-based flow control, loopback integration test |
 | `d169fcc` | M10 polish (verdict 15): reconnect generation guard, 1 KB client-buffer cap, `ModeChanged` dedup, UTF-8-safe truncation |
-| _this_ | M11a: `papercast-recv-core` (receiver core, cdylib) — connect/handshake/decode/`Ready` pacing/reconnect on one native thread; host-tested against `serve_proto` |
+| `4477897` | M11a: `papercast-recv-core` (receiver core, cdylib) — connect/handshake/decode/`Ready` pacing/reconnect on one native thread; host-tested against `serve_proto` |
+| _this_ | M11a JNI: `android`-feature JNI bindings (`RecvCore.nativeStart/nativeStop` + `FrameCallback`) and `scripts/build-recv-core.sh` cross-compiling both ABIs |
 
 - **M10a — DONE.** New `crates/papercast-proto`: envelope `[u32 BE len][u8 type]
   [payload]`; messages ServerHello/Update/ModeChanged (server→client), ClientHello/
@@ -210,9 +211,23 @@ eventual fix, Phase 1 backlog).
   ack-gated sink — that only one update is ever in flight; plus a self-contained
   reconnect test in recv-core (tiny controllable server drops the link, receiver
   reconnects and resumes). 53 tests total, own crates clippy-clean.
-- **M11a still open:** the JNI bindings themselves (behind `android`) and the
-  `cargo-ndk` `.so` build — deferred to the next commit(s), since neither is
-  host-testable and both need the NDK toolchain (setup steps below).
+- **M11a JNI + `.so` build — DONE.** `src/android.rs` (behind the `android` feature)
+  exposes two `extern "system"` entry points — `Java_com_papercast_RecvCore_nativeStart`
+  (returns an opaque `jlong` handle wrapping a boxed `Receiver`) and `..._nativeStop`
+  (reclaims the box; its `Drop` stops + joins). A `JniSink` implements `FrameSink` by
+  forwarding to a Java `FrameCallback` object (global ref): `onFrame` hands over a
+  **direct `ByteBuffer`** over the reused framebuffer (no pixel copy; valid only for the
+  synchronous call, and returning is the pull back-pressure), plus `onConnect`/
+  `onModeChanged`/`onDisconnect`. The receiver thread attaches to the JVM as a daemon on
+  first callback. The full Kotlin contract (class + interface + JNI signatures) is
+  documented at the top of `android.rs`; the two lifecycle caveats are folded in there
+  (`nativeStop` can block ~3 s mid-connect → call off the UI thread; `onDisconnect` fires
+  on clean stop too). Verified: compiles + clippy-clean under `--features android` on the
+  host; `cargo test --workspace` (feature off) still 53 green; `scripts/build-recv-core.sh`
+  cross-compiles both ABIs and `llvm-nm` confirms both JNI symbols are exported (`T`) in
+  the arm64 `.so`. The `.so`s land in `android/app/src/main/jniLibs/<abi>/` (gitignored —
+  build artifacts, not source). **Not yet run in a VM** — first real execution is the
+  M11b emulator bring-up.
 
 ## NDK / cargo-ndk toolchain setup (needed for M11a `.so` builds + M11b)
 
