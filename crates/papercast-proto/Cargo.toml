@@ -1,0 +1,13 @@
+[package]
+name = "papercast-proto"
+description = "PaperCast custom-transport wire framing and message types (no I/O; cross-compiles for the Android NDK)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+thiserror.workspace = true
+# Per-rect Gray8 compression. Builds for both the host and the Android NDK,
+# which is why the transport can share this crate with the receiver core.
+zstd = "0.13"

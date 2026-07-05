@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/papercast-core",
     "crates/papercast-capture",
+    "crates/papercast-proto",
     "crates/papercast",
     "vendor/rustvncserver",
 ]
@@ -21,6 +22,7 @@ repository = "https://github.com/chaselambert/papercast"
 [workspace.dependencies]
 papercast-core = { path = "crates/papercast-core" }
 papercast-capture = { path = "crates/papercast-capture" }
+papercast-proto = { path = "crates/papercast-proto" }
 # Vendored with a one-line patch for loopback-only binding; see vendor/rustvncserver/VENDORED.md
 rustvncserver = { path = "vendor/rustvncserver" }
 anyhow = "1"
