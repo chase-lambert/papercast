@@ -10,8 +10,9 @@ so nothing ever touches the network.
 **Status: Phase 1 complete; Phase 2 in progress.** Live mirroring over VNC with runtime
 display modes (Reading / Browsing / Writing / Video) works today, testable with any
 desktop VNC viewer. Phase 2 — a custom pull-based transport for real per-region e-ink
-refresh control plus a native Android receiver — has its host side landed (wire protocol,
-sender, and receiver core); the tablet-side app is next. See [Roadmap](#roadmap).
+refresh control plus a native Android receiver — is landed and emulator-verified end to
+end (protocol, sender, Rust receiver core, and a thin Kotlin shell); what remains is a
+vendor refresh backend and tuning on real tablet hardware. See [Roadmap](#roadmap).
 
 ```
 Wayland compositor ──ext-image-copy-capture──▶ e-ink pipeline ──▶ VNC :5900 (loopback)
@@ -277,12 +278,12 @@ Full roadmap: [`docs/ROADMAP.md`](docs/ROADMAP.md). In brief:
   Writing / Video modes over the VNC path, switchable at runtime via a control socket
   (`papercast ctl`); Atkinson dithering available. All host-side, no tablet needed.
 - **Phase 2 — custom protocol + native receiver (in progress).** The pull-based wire
-  protocol (`papercast-proto`), the host sender (`--transport papercast`), and a
-  host-tested Rust receiver core (`papercast-recv-core`) are landed; the thin
-  Android/Kotlin shell that loads the core and drives per-region EPD refresh is next. The
-  receiver is **device-neutral**: refresh intent maps to a concrete waveform in a small
-  per-device backend (Onyx/Boox, Daylight, or a generic fallback), so the target device
-  isn't locked in. VNC stays the universal fallback transport.
+  protocol (`papercast-proto`), the host sender (`--transport papercast`), the Rust
+  receiver core (`papercast-recv-core`), and a thin Android/Kotlin shell (`android/`) are
+  landed and **emulator-verified** end to end. The receiver is **device-neutral**: refresh
+  intent maps to a concrete waveform in a small per-device `RefreshBackend` — only the
+  `generic` one exists today; a vendor backend (Onyx/Boox, Daylight, …) and on-device
+  refresh tuning come with the chosen tablet. VNC stays the universal fallback transport.
 - **Phase 3 — reach.** Portal/PipeWire capture backend (GNOME/KDE); true extended display
   (not a mirror); wgpu compute pipeline; upstreaming the rustvncserver patches.
 

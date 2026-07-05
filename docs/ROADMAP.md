@@ -50,19 +50,20 @@ where PaperCast beats generic mirroring. VNC stays as a fallback transport.
 - **`papercast-recv-core`** — the tablet-side receiver core as host-testable Rust (built
   as a `cdylib` for Android). One native thread owns the connection, handshake, decode,
   pull pacing, and reconnect, handing decoded frames to a sink; verified end-to-end
-  against the host sender over loopback.
+  against the host sender over loopback. JNI bindings live behind an `android` feature.
+- **Thin Kotlin shell** (`android/`) — a fullscreen `SurfaceView` Activity that loads the
+  core and draws frames (zero-copy through a direct `ByteBuffer`); no protocol or decode
+  logic in Kotlin. Verified in an emulator: `adb reverse tcp:5920 tcp:5920` mirrors
+  `papercast run --source test --transport papercast`, rendering live.
 
 **Remaining:**
 
-- A **thin Kotlin shell** over the Rust core (JNI): Activity, SurfaceView, socket
-  lifecycle, and the device's EPD refresh calls; no protocol or decode logic in Kotlin.
-  Testable in an emulator before hardware.
-- **Device-neutral by design.** The core and protocol carry zero device-specific code;
-  refresh intent (Auto / Fast / Quality) passes through untouched. A small per-device
-  backend maps intent to a concrete waveform — Onyx/Boox (`EpdController`), Daylight, or a
-  `generic` fallback that simply draws — selected at runtime. The target device isn't
-  finalized (Boox Tab X C, Daylight DC-1, or another Android e-ink device), and the
-  architecture stays correct for any of them.
+- **Vendor refresh backends + real hardware.** The shell already has the device-neutral
+  seam: refresh intent (Auto / Fast / Quality) passes through untouched, and a
+  `RefreshBackend` maps it to a waveform — today only the `generic` impl (just draw),
+  selected by manufacturer with a fallback. The next backend (e.g. Onyx `EpdController`)
+  and the on-device measurements come with whichever tablet is chosen (Boox Tab X C,
+  Daylight DC-1, or another Android e-ink device); the core and protocol stay untouched.
 
 ## Phase 3 — reach
 
