@@ -410,4 +410,97 @@ mod tests {
 
         server.abort();
     }
+
+    // The M11a acceptance: drive the real receiver core against the real
+    // `serve_proto` sender over loopback and assert the handshake, the
+    // full-quality first paint, keep-newest, and — via an ack-gated sink that
+    // delays each `Ready` — that only one update is ever in flight.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn recv_core_pull_pacing_over_serve_proto() {
+        use papercast_recv_core::{FrameSink, FrameView};
+        use std::sync::mpsc as std_mpsc;
+
+        struct Delivered {
+            width: u16,
+            height: u16,
+            hint: RefreshHint,
+            pixels: Vec<u8>,
+        }
+
+        // Delivers each frame to the test, then blocks until the test acks —
+        // holding off the core's next `Ready` so the pull contract is testable.
+        struct GatedSink {
+            out: std_mpsc::Sender<Delivered>,
+            ack: std_mpsc::Receiver<()>,
+        }
+        impl FrameSink for GatedSink {
+            fn on_frame(&mut self, frame: FrameView<'_>) {
+                self.out
+                    .send(Delivered {
+                        width: frame.width,
+                        height: frame.height,
+                        hint: frame.refresh_hint,
+                        pixels: frame.pixels.to_vec(),
+                    })
+                    .unwrap();
+                let _ = self.ack.recv();
+            }
+        }
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let (frames_tx, frames_rx) = mpsc::channel::<Frame>(8);
+        let base = ModeSettings {
+            eink: papercast_core::eink::EinkConfig { levels: 16, ..Default::default() },
+            fps: 15,
+            tile_size: 64,
+            full_refresh_secs: 0,
+            full_refresh_updates: 0,
+        };
+        let state = Arc::new(Mutex::new(
+            ModeState::new(base.clone(), Default::default(), None).unwrap(),
+        ));
+        let (_settings_tx, settings_rx) = watch::channel(base);
+        let (_refresh_tx, refresh_rx) = mpsc::channel::<()>(8);
+
+        let cfg = ProtoConfig { framebuffer: (4, 3), mode_state: state };
+        let server = tokio::spawn(serve_proto(listener, cfg, frames_rx, settings_rx, refresh_rx));
+
+        let (out_tx, out_rx) = std_mpsc::channel();
+        let (ack_tx, ack_rx) = std_mpsc::channel();
+        let recv = papercast_recv_core::start(
+            &addr.to_string(),
+            GatedSink { out: out_tx, ack: ack_rx },
+        )
+        .unwrap();
+
+        // First frame: the server holds the priming Ready until a frame exists,
+        // then paints it full-quality for the fresh connection.
+        frames_tx.send(gray_frame(4, 3, 10)).await.unwrap();
+        let f1 = out_rx.recv_timeout(Duration::from_secs(5)).expect("first frame");
+        assert_eq!((f1.width, f1.height), (4, 3));
+        assert_eq!(f1.hint, RefreshHint::Quality, "first paint is a full refresh");
+        assert_eq!(f1.pixels, vec![10u8; 12]);
+
+        // While the sink is still blocked (no second Ready sent), push two more
+        // frames. The pull contract + keep-newest mean the core delivers nothing.
+        frames_tx.send(gray_frame(4, 3, 20)).await.unwrap();
+        frames_tx.send(gray_frame(4, 3, 30)).await.unwrap();
+        assert!(
+            out_rx.recv_timeout(Duration::from_millis(300)).is_err(),
+            "core delivered a frame with no Ready outstanding",
+        );
+
+        // Ack the first frame → the core sends its next Ready → the server sends
+        // the newest queued frame (30); the middle one (20) was superseded.
+        ack_tx.send(()).unwrap();
+        let f2 = out_rx.recv_timeout(Duration::from_secs(5)).expect("second frame");
+        assert_eq!(f2.pixels, vec![30u8; 12], "keep-newest: 20 was dropped");
+        assert_eq!(f2.hint, RefreshHint::Auto, "partial update with no active mode");
+        ack_tx.send(()).unwrap();
+
+        recv.stop();
+        server.abort();
+    }
 }

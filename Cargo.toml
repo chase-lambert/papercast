@@ -4,6 +4,7 @@ members = [
     "crates/papercast-core",
     "crates/papercast-capture",
     "crates/papercast-proto",
+    "crates/papercast-recv-core",
     "crates/papercast",
     "vendor/rustvncserver",
 ]
@@ -23,6 +24,7 @@ repository = "https://github.com/chaselambert/papercast"
 papercast-core = { path = "crates/papercast-core" }
 papercast-capture = { path = "crates/papercast-capture" }
 papercast-proto = { path = "crates/papercast-proto" }
+papercast-recv-core = { path = "crates/papercast-recv-core" }
 # Vendored with a one-line patch for loopback-only binding; see vendor/rustvncserver/VENDORED.md
 rustvncserver = { path = "vendor/rustvncserver" }
 anyhow = "1"

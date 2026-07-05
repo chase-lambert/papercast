@@ -1,0 +1,24 @@
+[package]
+name = "papercast-recv-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+# `lib` for the host-side integration test and the future JNI wrapper; `cdylib`
+# so cargo-ndk can emit the `.so` the Kotlin shell loads. No JNI symbols are
+# exported yet — those land behind the `android` feature (see below).
+[lib]
+crate-type = ["lib", "cdylib"]
+
+[dependencies]
+papercast-proto.workspace = true
+tracing.workspace = true
+# JNI bindings live behind this feature so `cargo test --workspace` on the host
+# never pulls an Android dependency. The `jni` crate itself is pure Rust and
+# compiles on the host (`--features android`); only *linking* into an Android VM
+# needs the NDK.
+jni = { version = "0.21", optional = true }
+
+[features]
+android = ["dep:jni"]

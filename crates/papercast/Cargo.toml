@@ -22,3 +22,8 @@ serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.145"
 toml = "1.1.2"
 rustix = { version = "1.1.4", features = ["process"] }
+
+[dev-dependencies]
+# Drives the M11a receiver core against the real `serve_proto` sender path in the
+# transport integration test.
+papercast-recv-core.workspace = true

@@ -155,7 +155,9 @@ eventual fix, Phase 1 backlog).
 | Commit | Milestone |
 |---|---|
 | `b4514ff` | M10a: `papercast-proto` crate — framing + message types, no I/O/async, cross-compiles for the NDK (12 tests) |
-| _this_ | M10b: host sender behind `--transport vnc\|papercast`, pull-based flow control, loopback integration test |
+| `d68da43` | M10b: host sender behind `--transport vnc\|papercast`, pull-based flow control, loopback integration test |
+| `d169fcc` | M10 polish (verdict 15): reconnect generation guard, 1 KB client-buffer cap, `ModeChanged` dedup, UTF-8-safe truncation |
+| _this_ | M11a: `papercast-recv-core` (receiver core, cdylib) — connect/handshake/decode/`Ready` pacing/reconnect on one native thread; host-tested against `serve_proto` |
 
 - **M10a — DONE.** New `crates/papercast-proto`: envelope `[u32 BE len][u8 type]
   [payload]`; messages ServerHello/Update/ModeChanged (server→client), ClientHello/
@@ -189,6 +191,28 @@ eventual fix, Phase 1 backlog).
 - **Noted (pre-existing, not M10):** the test-pattern source panics with a subtract
   overflow for framebuffers shorter than ~64 px (box size exceeds the band). Harmless at
   real sizes; worth a clamp when convenient.
+- **M11a — DONE (host path; the milestone's acceptance).** New crate
+  `crates/papercast-recv-core` (`lib` + `cdylib`). One native thread owns the whole
+  below-the-screen path: `TcpStream::connect_timeout` (to `127.0.0.1:5920` via
+  `adb reverse`), the `ClientHello`/`ServerHello` handshake (allocating a reused Gray8
+  framebuffer), the decode loop, pull flow control (send `Ready` only *after* the sink
+  finishes each frame — that's the back-pressure), and reconnect with exponential
+  backoff (200 ms → 5 s, reset on a healthy handshake). Frames reach the consumer through
+  a `FrameSink` trait — `on_frame(FrameView { width, height, refresh_hint, &pixels })`,
+  plus `on_connect`/`on_mode_changed`/`on_disconnect` — where `pixels` borrows the
+  reused framebuffer, so steady-state delivery allocates nothing. **Device-neutral:**
+  `RefreshHint` (re-exported) passes straight through; no waveform logic here (that's the
+  Kotlin `RefreshBackend`'s job). The `jni` dependency + bindings sit behind an `android`
+  cargo feature (OFF by default) so `cargo test --workspace` never touches Android deps;
+  the feature compile-checks on the host (`cargo build --features android` — `jni` is pure
+  Rust). Tests: a `serve_proto`↔recv-core loopback test in the `papercast` crate (real
+  sender path) asserting handshake, full-quality first paint, keep-newest, and — via an
+  ack-gated sink — that only one update is ever in flight; plus a self-contained
+  reconnect test in recv-core (tiny controllable server drops the link, receiver
+  reconnects and resumes). 53 tests total, own crates clippy-clean.
+- **M11a still open:** the JNI bindings themselves (behind `android`) and the
+  `cargo-ndk` `.so` build — deferred to the next commit(s), since neither is
+  host-testable and both need the NDK toolchain (setup steps below).
 
 ## After Phase 0 (backlog, see README roadmap)
 
