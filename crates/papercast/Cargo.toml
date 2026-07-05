@@ -9,6 +9,7 @@ repository.workspace = true
 [dependencies]
 papercast-core.workspace = true
 papercast-capture.workspace = true
+papercast-proto.workspace = true
 anyhow.workspace = true
 tracing.workspace = true
 clap = { version = "4", features = ["derive"] }

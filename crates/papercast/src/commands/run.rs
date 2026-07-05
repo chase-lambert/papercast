@@ -27,6 +27,12 @@ pub struct RunArgs {
     #[arg(long, value_enum, default_value_t = SourceKind::Wayland)]
     pub source: SourceKind,
 
+    /// Wire transport [default: vnc]. `vnc` serves any VNC viewer; `papercast`
+    /// serves the custom protocol (TCP 127.0.0.1:5920 by default, override with
+    /// --listen) for the native receiver — requires the e-ink pipeline (not --raw).
+    #[arg(long, value_enum, default_value_t = TransportArg::Vnc)]
+    pub transport: TransportArg,
+
     /// TOML config file; its [eink] section hot-reloads on save.
     #[arg(long)]
     pub config: Option<PathBuf>,
@@ -124,6 +130,14 @@ pub enum SourceKind {
     Test,
     /// Live screen capture (ext-image-copy-capture-v1).
     Wayland,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum TransportArg {
+    /// Serve any VNC viewer (RFB over the --listen address).
+    Vnc,
+    /// Serve the native receiver over the papercast custom protocol.
+    Papercast,
 }
 
 // CLI mirrors of the core enums: papercast-core stays clap-free.
@@ -295,6 +309,52 @@ async fn serve(args: RunArgs) -> anyhow::Result<()> {
     );
     let (fb_w, fb_h) = (source.width, source.height);
 
+    // Control socket: `papercast ctl` drives this running mirror regardless of
+    // transport. Held for the process lifetime; the guard unlinks the socket on
+    // clean exit. Set up before the transport branch so both paths get it.
+    let _socket_guard = control::spawn_server(control::ServerCtx {
+        state: Arc::clone(&mode_state),
+        settings_tx: settings_tx.clone(),
+        fps_tx: fps_tx.clone(),
+        refresh_tx: refresh_tx.clone(),
+        framebuffer: (fb_w, fb_h),
+        output: output.clone(),
+    })?;
+
+    // Papercast custom transport: it shares all of the setup above and differs
+    // only in the output half, so it's handled as an early return — the VNC path
+    // below stays exactly as it was (it's the M9 baseline and the M11 fallback).
+    if args.transport == TransportArg::Papercast {
+        anyhow::ensure!(
+            !args.raw,
+            "--transport papercast serves the e-ink pipeline; --raw is not supported yet"
+        );
+        let addr = args.listen.clone().unwrap_or_else(|| "127.0.0.1:5920".into());
+        let tcp = tokio::net::TcpListener::bind(&addr)
+            .await
+            .with_context(|| format!("binding papercast transport on {addr}"))?;
+        info!(
+            "papercast transport on {addr} ({fb_w}x{fb_h}, {} fps) — bridge with `adb reverse tcp:5920 tcp:5920`",
+            effective.fps,
+        );
+        return tokio::select! {
+            r = crate::transport::serve_proto(
+                tcp,
+                crate::transport::ProtoConfig {
+                    framebuffer: (fb_w as u16, fb_h as u16),
+                    mode_state: Arc::clone(&mode_state),
+                },
+                source.frames,
+                settings_rx,
+                refresh_rx,
+            ) => r,
+            _ = shutdown_signal() => {
+                info!("shutting down");
+                Ok(())
+            }
+        };
+    }
+
     let (server, mut events) = VncServer::new(
         fb_w as u16,
         fb_h as u16,
@@ -314,17 +374,6 @@ async fn serve(args: RunArgs) -> anyhow::Result<()> {
             server.listen(addr.as_str()).await
         })
     };
-
-    // Control socket: `papercast ctl` drives this running mirror. Held for the
-    // process lifetime; the guard unlinks the socket on clean exit.
-    let _socket_guard = control::spawn_server(control::ServerCtx {
-        state: Arc::clone(&mode_state),
-        settings_tx: settings_tx.clone(),
-        fps_tx: fps_tx.clone(),
-        refresh_tx: refresh_tx.clone(),
-        framebuffer: (fb_w, fb_h),
-        output: output.clone(),
-    })?;
 
     // Event drain: Phase 0 is view-only, so pointer/key events are ignored;
     // connects/disconnects are logged so you can see the tablet arrive.

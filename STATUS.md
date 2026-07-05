@@ -150,6 +150,37 @@ eventual fix, Phase 1 backlog).
   `[modes.reading] dither = "atkinson"`) in `boox-tab-x-c.toml`. Flip = one line in the
   built-in `reading` overlay in `mode.rs` if M9 confirms it.
 
+## Phase 2 progress (custom protocol + native receiver)
+
+| Commit | Milestone |
+|---|---|
+| `b4514ff` | M10a: `papercast-proto` crate — framing + message types, no I/O/async, cross-compiles for the NDK (12 tests) |
+| _this_ | M10b: host sender behind `--transport vnc\|papercast`, pull-based flow control, loopback integration test |
+
+- **M10a — DONE.** New `crates/papercast-proto`: envelope `[u32 BE len][u8 type]
+  [payload]`; messages ServerHello/Update/ModeChanged (server→client), ClientHello/
+  Ready (client→server). `encode()`/`decode()` over `&[u8]`/`Vec<u8>` only — decode
+  is streaming (`Ok(None)` = need more bytes) and hardened (payload cap, per-rect
+  pixel cap, decompressed-size check, exact-consumption check). Per-rect Gray8 is
+  zstd level-1. Only heavy dep is `zstd`, which builds for host and NDK. Kept free
+  of tokio/host-only deps per the M10 constraint.
+- **M10b — DONE.** `--transport vnc|papercast` (default `vnc`); papercast serves TCP
+  `127.0.0.1:5920` (override with `--listen`). Shares all of `serve()`'s setup (source,
+  mode state, control socket, config watcher) and branches only the output half as an
+  early return, so the VNC path is byte-for-byte unchanged (it's the M9 baseline and
+  M11 fallback). `crates/papercast/src/transport.rs::serve_proto` is a single-client
+  pull loop: keep-newest partial update + a pending full-refresh flag, sent only when a
+  `Ready` is outstanding; forced refreshes (mode change / periodic / `ctl refresh`) send
+  a full-quality repaint from a cached last frame even on an idle screen. `refresh_hint`
+  = Quality on full refresh, Fast in writing/video, else Auto. Verified: the specced
+  tokio loopback test (no Update before Ready, then one flows) **plus** an end-to-end
+  smoke test against the real binary (handshake, silent-before-Ready, full-frame Quality
+  first paint at 320×240 → 1973 B, flow-control cycling). VNC path re-checked green via
+  `rfb_mode_check.py`.
+- **Noted (pre-existing, not M10):** the test-pattern source panics with a subtract
+  overflow for framebuffers shorter than ~64 px (box size exceeds the band). Harmless at
+  real sizes; worth a clamp when convenient.
+
 ## After Phase 0 (backlog, see README roadmap)
 
 - Tablet arrival: Boox USB-debugging + `adb reverse` + AVNC (README has the walkthrough).

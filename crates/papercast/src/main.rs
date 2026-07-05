@@ -3,6 +3,7 @@ mod config;
 mod control;
 mod mode;
 mod pipeline_thread;
+mod transport;
 
 use clap::{Parser, Subcommand};
 

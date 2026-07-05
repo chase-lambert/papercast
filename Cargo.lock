@@ -697,6 +697,7 @@ dependencies = [
  "notify",
  "papercast-capture",
  "papercast-core",
+ "papercast-proto",
  "rustix",
  "rustvncserver",
  "serde",
