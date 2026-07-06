@@ -9,12 +9,13 @@ protocol or decode logic lives in Kotlin.
 It's **device-neutral**: a frame carries a refresh *intent* (Auto/Fast/Quality),
 and a `RefreshBackend` maps that intent to whatever the panel needs. This
 milestone ships only the `generic` backend (draw and ignore the hint); vendor
-backends (e.g. Onyx `EpdController`) come in M12 behind the same interface.
+backends (e.g. Onyx `EpdController`) arrive later behind the same interface.
 
 ## Prerequisites
 
-- **Android SDK** (platform 34, build-tools) and an **NDK**, with
-  `ANDROID_NDK_HOME` set. See the repo root `STATUS.md` for the toolchain setup.
+- **Android SDK** (platform 34, build-tools) and an **NDK**, with `ANDROID_HOME`
+  and `ANDROID_NDK_HOME` set. Command-line install:
+  `sdkmanager "platform-tools" "platforms;android-34" "ndk;<version>"`.
 - **Rust Android targets + cargo-ndk**:
   `rustup target add aarch64-linux-android x86_64-linux-android` and
   `cargo install cargo-ndk`.

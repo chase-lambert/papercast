@@ -137,7 +137,7 @@ pub const BUILTIN_NAMES: [&str; 4] = ["reading", "browsing", "writing", "video"]
 
 /// The built-in overlay for `name`, or `None` if `name` isn't a built-in.
 ///
-/// Intents (see `docs/ROADMAP.md`):
+/// Intents (see the "Display modes" table in `README.md`):
 /// - `reading`: max quality; every change (page turn) earns a clean full redraw.
 /// - `browsing`: balanced default, ≈ today's behavior.
 /// - `writing`: min latency; few levels = crisp text and cheap updates.
