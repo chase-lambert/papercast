@@ -86,6 +86,54 @@ flow is the same for any Android e-ink device.
 pipeline to the panel with `target-size = [3200, 2400]` and `levels = 16`. The panel is
 effectively grayscale at full resolution, so PaperCast deliberately doesn't do color.
 
+## Native Android receiver (custom transport)
+
+The VNC path above works with any viewer app. The `android/` app is the native receiver
+for `--transport papercast` (Phase 2): a thin Kotlin shell over the Rust
+`papercast-recv-core`, which owns the connection, protocol, decode, and pull flow control.
+Kotlin is only an Activity, a `SurfaceView`, lifecycle glue, and the `RefreshBackend`
+seam — no protocol logic. It's device-neutral: refresh intent (Auto / Fast / Quality) maps
+to a panel waveform in a per-device backend; today only `generic` (draw, ignore the hint)
+exists.
+
+Prerequisites:
+
+- **Android SDK** (platform 34, build-tools) and an **NDK**, with `ANDROID_HOME` and
+  `ANDROID_NDK_HOME` set:
+  `sdkmanager "platform-tools" "platforms;android-34" "ndk;<version>"`.
+- **Rust Android targets + cargo-ndk:**
+  `rustup target add aarch64-linux-android x86_64-linux-android && cargo install cargo-ndk`.
+- **A JDK the Android Gradle Plugin supports (17–21).** If your default `java` is newer,
+  point the build at a 21 JDK, e.g. `export JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64`.
+- `android/local.properties` with `sdk.dir=<your Android SDK path>` (gitignored; create it
+  once).
+
+Build, install, and run:
+
+```console
+$ scripts/build-recv-core.sh                 # cross-compile the core → android/app/src/main/jniLibs/<abi>/
+$ cd android && ./gradlew assembleDebug      # → app/build/outputs/apk/debug/app-debug.apk
+$ adb install -r app/build/outputs/apk/debug/app-debug.apk
+$ adb reverse tcp:5920 tcp:5920              # host :5920 reachable as 127.0.0.1:5920 on device
+$ adb shell am start -n com.papercast/.MainActivity
+```
+
+The `.so`s are build artifacts (gitignored) — re-run `build-recv-core.sh` (arm64 for the
+device, x86_64 for the emulator; pass `debug` for a debug build) whenever the receiver
+core changes. On the host, serve the custom transport:
+
+```console
+$ papercast run --source test --transport papercast     # or --output <MONITOR>
+```
+
+The app connects to `127.0.0.1:5920` and reconnects on its own once the host is up (and
+after replug / re-running `adb reverse`). Force a specific backend with an intent extra:
+`adb shell am start -n com.papercast/.MainActivity --es backend generic`.
+
+**Verified** in an emulator (pixel_tablet, Android 14, x86_64): the dithered test pattern
+renders and updates live, delivered zero-copy through a direct `ByteBuffer` and drawn
+letterboxed to the `SurfaceView`. Not yet exercised on real hardware.
+
 ## Configuration
 
 Two example configs ship in the repo root: `papercast.toml` (desktop defaults, every knob
