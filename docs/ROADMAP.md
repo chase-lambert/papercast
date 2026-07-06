@@ -75,4 +75,5 @@ Ordered by demand; none blocks daily use of Phases 1–2.
 - **GPU (wgpu) pipeline** — only if on-device measurements show the CPU pipeline limiting
   fps or battery.
 - **Upstream the rustvncserver patches** (loopback bind address; the
-  `SetEncodings`/`ClientCutText` parser fix) and drop the vendored copy.
+  `SetEncodings`/`ClientCutText` parser fix; the continuous-update pacing fix) and
+  drop the vendored copy.

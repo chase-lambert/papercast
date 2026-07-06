@@ -134,7 +134,10 @@ current values (`settings_tx.borrow()` / `fps_tx.borrow()`) instead of a private
 `last_sent` cache that a `ctl` switch would leave stale. Documented the known
 idle-screen limitation (a switch on a fully idle screen resends old-settings
 pixels until the next damage-driven frame; pipeline-caches-last-raw-frame is the
-eventual fix, Phase 1 backlog).
+eventual fix, Phase 1 backlog). **That fix has since landed (`0163ac2`): the
+pipeline thread now waits on either a new frame or a settings change and
+re-renders the cached last raw frame on a switch, so a mode change shows up
+immediately even on a fully idle screen.**
 
 - **M8 visual gate — DONE; default stays Bayer, decision deferred to M9.** Compared
   Bayer vs Atkinson `--save-frame` PNGs at `reading` settings (16 levels, sharpen 1.0).
@@ -192,9 +195,11 @@ eventual fix, Phase 1 backlog).
   last-sent-name check, so a config edit that keeps the active mode no longer re-announces
   it. Plus the cosmetic proto nit: the 255-byte name truncation now floors to a UTF-8 char
   boundary. All verified (51 tests, clippy-clean, end-to-end re-smoke green).
-- **Noted (pre-existing, not M10):** the test-pattern source panics with a subtract
-  overflow for framebuffers shorter than ~64 px (box size exceeds the band). Harmless at
-  real sizes; worth a clamp when convenient.
+- **Noted (pre-existing, not M10) — FIXED (`4d82be6`, Phase 1 backlog):** the
+  test-pattern source panicked with a subtract overflow for framebuffers shorter than
+  ~64 px (the 16 px-floored box exceeded the `h/4` band). The box is now capped to what
+  fits in the band and width, with saturating travel ranges; a regression test sweeps
+  degenerate sizes.
 - **M11a — DONE (host path; the milestone's acceptance).** New crate
   `crates/papercast-recv-core` (`lib` + `cdylib`). One native thread owns the whole
   below-the-screen path: `TcpStream::connect_timeout` (to `127.0.0.1:5920` via
