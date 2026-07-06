@@ -95,11 +95,15 @@ fn render(background: &[u8], width: u32, height: u32, elapsed: Duration) -> Fram
     let mut px = background.to_vec();
     let ms = elapsed.as_millis() as u64;
 
-    // Bouncing box in the bottom band: ping-pong motion.
+    // Bouncing box in the bottom band: ping-pong motion. On very small
+    // framebuffers the band drops under the nominal 16 px floor, so cap the box
+    // to what actually fits in the band and the width (min 8 so the `box_size -
+    // 8` inner inset below stays non-negative) and use saturating travel ranges
+    // — otherwise these subtractions underflow and panic.
     let band = (h / 4) as i64;
-    let box_size = (band / 2).clamp(16, 96) as usize;
-    let track_w = (w - box_size).max(1) as u64;
-    let track_h = (band as usize - box_size).max(1) as u64;
+    let box_size = (band / 2).clamp(16, 96).min(band).min(w as i64).max(8) as usize;
+    let track_w = w.saturating_sub(box_size).max(1) as u64;
+    let track_h = (band as usize).saturating_sub(box_size).max(1) as u64;
     let bx = ping_pong(ms / 4, track_w) as usize;
     let by = 3 * band as usize + ping_pong(ms / 7, track_h) as usize;
     fill_rect(&mut px, w, bx, by, box_size, box_size, 0);
@@ -137,3 +141,23 @@ fn ping_pong(t: u64, len: u64) -> u64 {
 
 // (fill_rect and the seven-segment renderer live in papercast_core::overlay,
 // shared with the --latency-test frame stamp.)
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Tiny framebuffers must not panic: the bottom band can fall under the
+    // box's nominal 16 px size, which used to underflow the travel-range
+    // subtraction. Sweep a few degenerate sizes across a couple of animation
+    // phases (the inversion flash at ms % 10_000 >= 9_000, and a plain frame).
+    #[test]
+    fn render_survives_tiny_framebuffers() {
+        for &(w, h) in &[(1, 1), (8, 8), (16, 16), (32, 24), (63, 63), (200, 40)] {
+            let bg = render_background(w, h);
+            for &ms in &[0u64, 9_500] {
+                let frame = render(&bg, w, h, Duration::from_millis(ms));
+                assert_eq!(frame.data.len(), (w * h) as usize);
+            }
+        }
+    }
+}
