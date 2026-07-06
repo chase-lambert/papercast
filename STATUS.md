@@ -160,7 +160,8 @@ eventual fix, Phase 1 backlog).
 | `4477897` | M11a: `papercast-recv-core` (receiver core, cdylib) — connect/handshake/decode/`Ready` pacing/reconnect on one native thread; host-tested against `serve_proto` |
 | `e1238b7` | M11a JNI: `android`-feature JNI bindings (`RecvCore.nativeStart/nativeStop` + `FrameCallback`) and `scripts/build-recv-core.sh` cross-compiling both ABIs |
 | `7b28fd4` | M11a JNI: fix a JNI local-reference leak (per-callback `with_local_frame`) |
-| _this_ | M11b: thin Kotlin shell under `android/` (Activity + SurfaceView + `RefreshBackend`/generic), emulator-verified end to end |
+| `ab26f6c` | M11b: thin Kotlin shell under `android/` (Activity + SurfaceView + `RefreshBackend`/generic), emulator-verified end to end |
+| _this_ | M11b.1: cache-and-redraw in `FrameRenderer` (verdict 19) — closes the blank-screen gap when a paint races surface creation/recreation |
 
 - **M10a — DONE.** New `crates/papercast-proto`: envelope `[u32 BE len][u8 type]
   [payload]`; messages ServerHello/Update/ModeChanged (server→client), ClientHello/
@@ -252,6 +253,16 @@ eventual fix, Phase 1 backlog).
   `android/{.gradle,build,local.properties}` are gitignored; `android/README.md` documents
   build + install including the `build-recv-core.sh` prerequisite. Not yet on real
   hardware (M9/M12) — emulator only.
+- **M11b.1 cache-and-redraw — DONE (verdict 19).** `FrameRenderer` now always decodes
+  each frame into the cached bitmap even with no surface attached, and redraws that
+  cached bitmap whenever `setSurface` gets a surface (creation/rotation/resize). The
+  protocol has no client-initiated resend, so without this a first full paint that races
+  surface creation — or a surface recreated on an idle screen — would sit blank/stale
+  until the next damage-driven update. Verified headless with the host **killed**: after
+  background→foreground the emulator still showed the last frame (frozen counter, no live
+  source), i.e. the redraw came from cache, not a new frame. No new per-pixel format
+  assumption added (still Gray8; the M12.5 RGB path stays gated on a `ServerHello` format
+  byte).
 
 ## NDK / cargo-ndk toolchain setup (needed for M11a `.so` builds + M11b)
 
