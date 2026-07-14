@@ -1,7 +1,6 @@
 //! Reconnect-with-backoff, exercised against a tiny controllable server so the
-//! test can drop a connection deterministically (something `serve_proto` gives
-//! no handle to do). The real end-to-end sender-path test lives in the
-//! `papercast` crate, where `serve_proto` is in scope.
+//! test can drop a connection deterministically. The real end-to-end sender
+//! path is exercised by the native transport tests in the `papercast` crate.
 
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};

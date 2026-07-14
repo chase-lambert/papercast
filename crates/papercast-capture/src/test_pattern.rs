@@ -1,6 +1,6 @@
-//! Synthetic animated test source — lets the whole VNC path be exercised with
-//! no compositor and no tablet. Deliberately built to stress what e-ink cares
-//! about and what the M0b checklist demands:
+//! Synthetic animated test source for exercising either output transport with
+//! no compositor or tablet. Deliberately built to stress what e-ink cares about
+//! and every update shape:
 //!
 //! - static fine detail (1-px line gratings ≈ small text) to judge crispness
 //! - a bouncing box → small sub-rect updates every frame
@@ -126,9 +126,6 @@ fn render(background: &[u8], width: u32, height: u32, elapsed: Duration) -> Fram
         height,
         format: PixelFormat::Gray8,
         data: px,
-        // None = "damage unknown, treat everything as dirty". The VNC
-        // framebuffer diffs for us in M0; real damage arrives with M1 capture.
-        damage: None,
     }
 }
 
@@ -149,7 +146,7 @@ mod tests {
     // Tiny framebuffers must not panic: the bottom band can fall under the
     // box's nominal 16 px size, which used to underflow the travel-range
     // subtraction. Sweep a few degenerate sizes across a couple of animation
-    // phases (the inversion flash at ms % 10_000 >= 9_000, and a plain frame).
+    // points (the inversion flash at ms % 10_000 >= 9_000, and a plain frame).
     #[test]
     fn render_survives_tiny_framebuffers() {
         for &(w, h) in &[(1, 1), (8, 8), (16, 16), (32, 24), (63, 63), (200, 40)] {

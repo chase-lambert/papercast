@@ -204,8 +204,7 @@ fn pull_loop<S: FrameSink>(
                 stream.write_all(&encode(&Message::Ready))?;
             }
             Message::ModeChanged(name) => sink.on_mode_changed(&name),
-            // A mid-stream ServerHello would mean a framebuffer resize; the host
-            // never does this today, so treat it as a protocol reset.
+            // A mid-stream ServerHello replaces the receiver's framebuffer geometry.
             Message::ServerHello(h) => {
                 *fb = Framebuffer::new(&h);
                 sink.on_connect(fb.width, fb.height, fb.levels);

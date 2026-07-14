@@ -137,9 +137,9 @@ pub const BUILTIN_NAMES: [&str; 4] = ["reading", "browsing", "writing", "video"]
 
 /// The built-in overlay for `name`, or `None` if `name` isn't a built-in.
 ///
-/// Intents (see the "Display modes" table in `README.md`):
+/// Intents (see "Modes and configuration" in `README.md`):
 /// - `reading`: max quality; every change (page turn) earns a clean full redraw.
-/// - `browsing`: balanced default, ≈ today's behavior.
+/// - `browsing`: balanced general-purpose default.
 /// - `writing`: min latency; few levels = crisp text and cheap updates.
 /// - `video`: motion; no sharpen halos, never interrupt with a full redraw.
 fn builtin(name: &str) -> Option<ModeOverlay> {

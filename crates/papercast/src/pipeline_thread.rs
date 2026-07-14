@@ -1,6 +1,6 @@
-//! Runs the e-ink pipeline on its own OS thread, between the capture source
-//! and the VNC server: frames in, processed frames out, same `SourceHandle`
-//! shape on both sides so the server code doesn't know it's there.
+//! Runs the e-ink pipeline on its own OS thread, between the capture source and
+//! the selected output transport: frames in, processed frames out, with the
+//! same `SourceHandle` shape on both sides.
 //!
 //! A dedicated thread (rather than processing inline in the async loop)
 //! keeps CPU-heavy image work off tokio's reactor threads, and gives the
@@ -20,8 +20,8 @@ use crate::mode::ModeSettings;
 const SAVE_FRAME_INDEX: u64 = 10;
 
 /// Sync the pipeline to the latest effective settings. Only `.eink` concerns
-/// the pipeline; a target-size edit is refused (the VNC framebuffer was sized
-/// from it at startup). `set_config` (which rebuilds derived tables) runs only
+/// the pipeline; a target-size edit is refused (the transport framebuffer was
+/// sized from it at startup). `set_config` (which rebuilds derived tables) runs only
 /// when the effective config actually differs, so an fps-only mode change is a
 /// no-op here. Consumes the watch's "changed" flag.
 fn reload_config(pipeline: &mut Pipeline, settings_rx: &mut watch::Receiver<ModeSettings>) {
@@ -54,9 +54,9 @@ pub fn spawn(
             // A private current-thread runtime lets this thread wait on *either*
             // a new raw frame or a settings change, instead of blocking on frames
             // alone. That's what makes a mode switch re-render immediately on an
-            // idle screen: capture is damage-driven, so with no fresh frame we
+            // idle screen: capture is change-driven, so with no fresh frame we
             // reprocess the cached last raw frame under the new config rather than
-            // leaving the old-settings pixels up until the next damage event. The
+            // leaving the old-settings pixels up until the next captured change. The
             // heavy pipeline work still runs on this dedicated thread (its own
             // runtime), off the main reactor.
             let rt = tokio::runtime::Builder::new_current_thread()
@@ -175,7 +175,6 @@ mod tests {
             height: h,
             format: PixelFormat::Gray8,
             data: vec![value; (w * h) as usize],
-            damage: None,
         }
     }
 

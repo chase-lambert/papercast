@@ -1,6 +1,5 @@
-//! M0b throwaway stress: prove that two *disjoint* `update_cropped` calls per
-//! tick reach a client as two separate small rects (not one merged bounding
-//! box). This is the mechanism M3's tile-based dirty updates rely on.
+//! Manual stress check: prove that two disjoint `update_cropped` calls per tick
+//! reach a client as separate small rects rather than one merged bounding box.
 //!
 //! Run: `cargo run -p papercast --example subrect_stress`
 //! then check with a client on 127.0.0.1:5901.

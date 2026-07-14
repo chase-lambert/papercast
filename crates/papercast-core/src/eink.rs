@@ -164,10 +164,6 @@ impl Pipeline {
             height: out_h,
             format: PixelFormat::Gray8,
             data: buf.clone(),
-            // Source damage is in source coordinates; once scaled it no
-            // longer applies. The current VNC path does its own tile diff
-            // over the processed frame.
-            damage: if needs_scale { None } else { frame.damage.clone() },
         })
     }
 }
@@ -208,7 +204,7 @@ mod tests {
     use super::*;
 
     fn gray_frame(w: u32, h: u32, data: Vec<u8>) -> Frame {
-        Frame { width: w, height: h, format: PixelFormat::Gray8, data, damage: None }
+        Frame { width: w, height: h, format: PixelFormat::Gray8, data }
     }
 
     #[test]
@@ -238,7 +234,6 @@ mod tests {
             height: 1,
             format: PixelFormat::Bgrx8888,
             data: vec![b, g, r, 0],
-            damage: None,
         };
         let mut out = Vec::new();
         to_gray(&px(255, 0, 0), &mut out);
@@ -270,14 +265,5 @@ mod tests {
         assert!(out.data.iter().all(|&v| v == 0 || v == 255));
         // Letterbox bars (top rows) are white.
         assert!(out.data[..64 * 16].iter().all(|&v| v == 255));
-    }
-
-    #[test]
-    fn same_size_passes_damage_through() {
-        let mut p = Pipeline::new(EinkConfig { sharpen: 0.0, ..Default::default() });
-        let mut f = gray_frame(8, 8, vec![10; 64]);
-        f.damage = Some(vec![crate::Rect::new(1, 1, 2, 2)]);
-        let out = p.process(&f).unwrap();
-        assert_eq!(out.damage.as_ref().map(Vec::len), Some(1));
     }
 }

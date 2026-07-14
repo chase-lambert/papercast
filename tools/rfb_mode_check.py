@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Drive a `papercast run` over RFB + `papercast ctl` and assert mode behavior.
 
-This is the committed regression check for Phase 1 display modes. It:
+This regression check:
 
   * starts `papercast run --source test` on an isolated port + control socket,
   * connects as a minimal RFB 3.8 client (security None, Raw encoding) and
@@ -17,13 +17,13 @@ This is the committed regression check for Phase 1 display modes. It:
 
 Note on the writing-mode target: the vendored rustvncserver quantizes its
 continuous-update pushes to a check tick against a min send-interval. As shipped
-upstream (16 ms tick / 33 ms interval) that capped delivery at ~20 fps; the M8.5
+upstream (16 ms tick / 33 ms interval) that capped delivery at ~20 fps; the local
 pacing patch (8 ms tick / 30 ms interval, see vendor/.../VENDORED.md) lifts the
 ceiling to ~31 fps, so writing's 30 fps source is now observable. Reading (5) and
 browsing (15) sit well under the ceiling and are measured accurately. Writing is
 also the regression test for the serve-loop jitter bug: with that bug writing was
 throttled to ~15 fps (halved), so asserting writing reaches ~27 catches both a
-jitter regression and a revert of the pacing patch. (The Phase 2 custom protocol
+jitter regression and a revert of the pacing patch. (The native protocol
 has no such cap at all.)
 
 Usage:
@@ -200,7 +200,7 @@ def main():
                 failures.append(f"{mode}: no full-frame redraw after switch "
                                 f"(max coverage {max_frac:.2f})")
 
-        # writing is the regression case: with the M8.5 pacing patch the server
+        # writing is the regression case: with the local pacing patch the server
         # ceiling is ~31 fps, so a 30 fps source is nearly fully delivered. The
         # jitter bug throttled it to ~15 (below browsing) and a pacing-patch
         # revert drops it to ~20, so requiring >= 27 catches either.

@@ -1,6 +1,6 @@
 //! Dirty-tile detection: which parts of the processed frame actually changed?
 //!
-//! The VNC layer sends exactly the rects we hand it, so granularity here is
+//! Both output transports send the rects produced here, so granularity is
 //! bandwidth: a blinking cursor should cost one tile, not a bounding box from
 //! the cursor to the clock. Tiles are compared against the previous processed
 //! frame (post-dither — safe because Bayer is position-anchored, so unchanged
@@ -11,8 +11,8 @@ use crate::Rect;
 pub struct TileDiff {
     tile: u32,
     /// More rects than this per frame collapse into one bounding box — the
-    /// VNC layer merges beyond ~10 regions anyway, and per-rect overhead
-    /// (protocol headers, syscalls) starts beating the pixel savings.
+    /// VNC merges beyond roughly 10 regions anyway, and both transports'
+    /// per-rect overhead starts beating the pixel savings.
     max_rects: usize,
     prev: Vec<u8>,
     dims: (u32, u32),

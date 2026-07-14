@@ -1,9 +1,9 @@
 //! Screen capture: compositor probing and capture backends.
 //!
-//! Capture is probe-first: we never assume a protocol is present, we inspect
-//! the registry globals at runtime (`probe::run`) and pick the best supported
-//! backend. Priority: ext-image-copy-capture-v1 (standard) → COSMIC-specific
-//! zcosmic_* → portal/PipeWire (contingency, separate backend).
+//! PaperCast implements ext-image-copy-capture-v1 and checks for its required
+//! globals at runtime with [`probe::run`]. The probe also reports detected
+//! COSMIC-specific and legacy wlroots capture globals, but no backend selects
+//! them. Portal/PipeWire capture remains demand-driven future work.
 
 pub mod probe;
 pub mod source;

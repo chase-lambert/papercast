@@ -7,8 +7,7 @@ Apache-2.0 (see `LICENSE`/`NOTICE`, unchanged).
 
 Upstream `VncServer::listen(port)` hardcodes binding to `0.0.0.0`. PaperCast
 serves an **unauthenticated** VNC session and must bind `127.0.0.1` by default
-(clients arrive via `adb reverse`, which connects to loopback). No upstream
-issue/PR exists for this as of 2026-07.
+(clients arrive via `adb reverse`, which connects to loopback).
 
 ## Local changes
 
@@ -20,7 +19,7 @@ issue/PR exists for this as of 2026-07.
   across TCP segments (TigerVNC 1.14.0 does this) left the first byte of the
   following data to be parsed as a bogus message type. The parser now waits for
   the complete message before advancing the buffer. Found during TigerVNC live
-  validation (Phase 0, M4).
+  validation.
 - `src/client.rs`: continuous-update **pacing** — the update-check tick was
   16 ms and the min send-interval 33 ms. Combined with one wasted "start
   deferring" tick, the first push after a frame landed at ~48 ms: a hard
@@ -28,7 +27,7 @@ issue/PR exists for this as of 2026-07.
   quantization latency on every update. Lowered the tick to 8 ms and the
   min-interval to 30 ms → ~31 fps ceiling, so writing mode's 30 fps target is
   actually observable and pen latency drops. Found while building
-  `tools/rfb_mode_check.py` (Phase 1, M8.5).
+  `tools/rfb_mode_check.py`.
 
 ## Licensing
 
@@ -41,14 +40,13 @@ the workspace's MIT license used by PaperCast's own crates.
 This vendored copy still emits a handful of upstream clippy warnings (unused
 assignments, missing doc backticks, etc.). They are intentionally left as-is:
 PaperCast's own crates are kept clippy-clean, but the vendored tree is treated
-as third-party code and will be cleaned as part of upstreaming (M16), not
-patched locally.
+as third-party code rather than patched locally for style.
 
-## TODO (upstreaming — see roadmap M16)
+## Upstreaming
 
 Send all three changes upstream as PRs: (a) the `listen` address change
 (backwards-compatible variant: add `listen_addr()` alongside `listen()`),
 (b) the `SetEncodings`/`ClientCutText` parser fix, and (c) the continuous-update
 pacing fix (tick 16→8 ms, min-interval 33→30 ms; upstream may prefer these as
 tunables rather than hardcoded constants). Drop this vendored copy and return to
-the crates.io release once merged.
+the crates.io release once the changes are merged and released.

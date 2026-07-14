@@ -1,7 +1,7 @@
 //! Runtime inspection of the Wayland compositor: which globals exist, what
 //! outputs look like, which shm formats are offered, and — the question that
-//! decides our capture backend — which screen-capture protocol families are
-//! actually present.
+//! decides whether capture can start — whether PaperCast's implemented
+//! ext-image-copy-capture globals are both present.
 
 use wayland_client::{
     protocol::{wl_output, wl_registry, wl_shm},
@@ -24,17 +24,6 @@ pub struct OutputInfo {
     pub mode: Option<(i32, i32, i32)>,
     pub scale: i32,
     pub transform: Option<String>,
-}
-
-/// A capture protocol family we know how to (eventually) drive.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CaptureTier {
-    /// ext-image-copy-capture-v1 + ext-image-capture-source-v1 (standard).
-    ExtImageCopyCapture,
-    /// COSMIC-specific zcosmic_* screencopy protocols.
-    CosmicScreencopy,
-    /// Legacy wlroots zwlr_screencopy_manager_v1.
-    WlrScreencopy,
 }
 
 #[derive(Debug, Default)]
@@ -63,31 +52,24 @@ impl ProbeReport {
             .collect()
     }
 
-    /// Best supported capture tier, in our priority order.
-    pub fn best_tier(&self) -> Option<CaptureTier> {
-        self.supported_tiers().into_iter().next()
-    }
-
-    pub fn supported_tiers(&self) -> Vec<CaptureTier> {
-        let mut tiers = Vec::new();
+    /// PaperCast's Wayland backend needs both halves of the standard protocol.
+    pub fn supports_capture(&self) -> bool {
         // The standard protocol splits "what to capture" (source manager)
         // from "how to copy it" (capture manager); we need both.
-        if self.global_version("ext_image_copy_capture_manager_v1").is_some()
+        self.global_version("ext_image_copy_capture_manager_v1").is_some()
             && self
                 .global_version("ext_output_image_capture_source_manager_v1")
                 .is_some()
-        {
-            tiers.push(CaptureTier::ExtImageCopyCapture);
-        }
-        if self.globals.iter().any(|g| {
-            g.interface.starts_with("zcosmic_screencopy_manager_v")
-        }) {
-            tiers.push(CaptureTier::CosmicScreencopy);
-        }
-        if self.global_version("zwlr_screencopy_manager_v1").is_some() {
-            tiers.push(CaptureTier::WlrScreencopy);
-        }
-        tiers
+    }
+
+    pub fn has_cosmic_screencopy(&self) -> bool {
+        self.globals
+            .iter()
+            .any(|g| g.interface.starts_with("zcosmic_screencopy_manager_v"))
+    }
+
+    pub fn has_wlr_screencopy(&self) -> bool {
+        self.global_version("zwlr_screencopy_manager_v1").is_some()
     }
 }
 
@@ -200,4 +182,42 @@ pub fn run() -> anyhow::Result<ProbeReport> {
 
     state.report.globals.sort_by(|a, b| a.interface.cmp(&b.interface));
     Ok(state.report)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn report(interfaces: &[&str]) -> ProbeReport {
+        ProbeReport {
+            globals: interfaces
+                .iter()
+                .map(|interface| GlobalEntry { interface: (*interface).into(), version: 1 })
+                .collect(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn capture_requires_both_ext_managers() {
+        assert!(!report(&[]).supports_capture());
+        assert!(!report(&["ext_image_copy_capture_manager_v1"]).supports_capture());
+        assert!(!report(&["ext_output_image_capture_source_manager_v1"]).supports_capture());
+        assert!(report(&[
+            "ext_image_copy_capture_manager_v1",
+            "ext_output_image_capture_source_manager_v1",
+        ])
+        .supports_capture());
+    }
+
+    #[test]
+    fn detected_legacy_protocols_are_not_selectable_backends() {
+        let cosmic = report(&["zcosmic_screencopy_manager_v2"]);
+        assert!(cosmic.has_cosmic_screencopy());
+        assert!(!cosmic.supports_capture());
+
+        let wlr = report(&["zwlr_screencopy_manager_v1"]);
+        assert!(wlr.has_wlr_screencopy());
+        assert!(!wlr.supports_capture());
+    }
 }

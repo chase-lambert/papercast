@@ -8,10 +8,9 @@ import android.os.Build
  * Quality), never a vendor waveform. A `RefreshBackend` is the one place that
  * turns that intent into whatever the panel needs.
  *
- * This milestone ships only [GenericRefreshBackend], which draws and ignores the
- * hint — correct for any Android device, and plausibly sufficient for a fast LCD
- * or a Daylight-style panel. M12 adds vendor backends (e.g. Onyx `EpdController`)
- * behind this same interface without touching the core or protocol.
+ * [GenericRefreshBackend] draws and ignores the hint. Hardware that needs
+ * waveform control gets a vendor implementation behind this interface without
+ * changing the receiver core or wire protocol.
  */
 interface RefreshBackend {
     /**
@@ -41,7 +40,6 @@ interface RefreshBackend {
 
         private fun byManufacturer(): RefreshBackend {
             return when (Build.MANUFACTURER.lowercase()) {
-                // "onyx" -> OnyxRefreshBackend()   // M12
                 else -> GenericRefreshBackend()
             }
         }

@@ -19,7 +19,7 @@ import kotlin.math.min
  * is attached, and re-drawn whenever a surface (re)appears. That matters because
  * the protocol has no client-initiated resend: if the first full-quality paint
  * races surface creation, or the surface is recreated (e.g. on rotation), we'd
- * otherwise sit blank/stale until the next damage-driven update — which on an
+ * otherwise sit blank/stale until the next captured update — which on an
  * idle desktop can be a long time.
  *
  * No protocol knowledge lives here: it only reshapes bytes and draws. Panel-
@@ -46,6 +46,8 @@ class FrameRenderer(private val backend: RefreshBackend) : FrameCallback {
     fun setSurface(holder: SurfaceHolder?) {
         this.holder = holder
         if (holder != null && hasFrame) {
+            // A waveform-aware backend must force Quality for this cached,
+            // full-screen repaint instead of replaying a possibly Fast hint.
             draw(holder, lastHint)
         }
     }

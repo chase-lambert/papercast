@@ -13,7 +13,8 @@ import android.view.WindowManager
  * native core and all drawing in [FrameRenderer].
  *
  * The host is reached at `127.0.0.1:5920`, bridged over USB with
- * `adb reverse tcp:5920 tcp:5920` (see android/README.md).
+ * `adb reverse tcp:5920 tcp:5920`. Setup is documented under “Experimental
+ * native receiver” in the repository's root README.
  */
 class MainActivity : Activity(), SurfaceHolder.Callback {
 

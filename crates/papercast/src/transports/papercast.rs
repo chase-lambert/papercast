@@ -26,7 +26,7 @@ use tracing::{debug, info, warn};
 use crate::mode::{ModeSettings, ModeState};
 
 /// What the transport needs beyond its I/O channels.
-pub struct ProtoConfig {
+pub struct Config {
     /// Framebuffer size (width, height), already validated to fit `u16`.
     pub framebuffer: (u16, u16),
     /// Shared mode state — read for the mode name (`ModeChanged`) and to derive
@@ -34,11 +34,34 @@ pub struct ProtoConfig {
     pub mode_state: Arc<Mutex<ModeState>>,
 }
 
+/// Bind and serve the native PaperCast receiver protocol.
+pub async fn serve(
+    listen: &str,
+    cfg: Config,
+    frames: mpsc::Receiver<Frame>,
+    settings_rx: watch::Receiver<ModeSettings>,
+    refresh_rx: mpsc::Receiver<()>,
+) -> anyhow::Result<()> {
+    let fps = settings_rx.borrow().fps;
+    let listener = TcpListener::bind(listen)
+        .await
+        .with_context(|| format!("binding papercast transport on {listen}"))?;
+    let bound = listener
+        .local_addr()
+        .context("reading papercast listener address")?;
+    let host_port = bound.port();
+    info!(
+        "papercast transport on {bound} ({}x{}, {fps} fps) — `adb reverse tcp:5920 tcp:{host_port}`",
+        cfg.framebuffer.0, cfg.framebuffer.1,
+    );
+    serve_listener(listener, cfg, frames, settings_rx, refresh_rx).await
+}
+
 /// Run the transport until the frame source ends or the listener fails. One
 /// client at a time: a new connection replaces the previous one.
-pub async fn serve_proto(
+async fn serve_listener(
     listener: TcpListener,
-    cfg: ProtoConfig,
+    cfg: Config,
     mut frames: mpsc::Receiver<Frame>,
     mut settings_rx: watch::Receiver<ModeSettings>,
     mut refresh_rx: mpsc::Receiver<()>,
@@ -337,7 +360,7 @@ mod tests {
     use tokio::net::TcpStream;
 
     fn gray_frame(w: u32, h: u32, fill: u8) -> Frame {
-        Frame { width: w, height: h, format: PixelFormat::Gray8, data: vec![fill; (w * h) as usize], damage: None }
+        Frame { width: w, height: h, format: PixelFormat::Gray8, data: vec![fill; (w * h) as usize] }
     }
 
     // Read exactly one decoded message from a stream (blocking on more bytes).
@@ -371,8 +394,8 @@ mod tests {
         let (_settings_tx, settings_rx) = watch::channel(base);
         let (_refresh_tx, refresh_rx) = mpsc::channel::<()>(8);
 
-        let cfg = ProtoConfig { framebuffer: (32, 24), mode_state: state };
-        let server = tokio::spawn(serve_proto(listener, cfg, frames_rx, settings_rx, refresh_rx));
+        let cfg = Config { framebuffer: (32, 24), mode_state: state };
+        let server = tokio::spawn(serve_listener(listener, cfg, frames_rx, settings_rx, refresh_rx));
 
         let mut client = TcpStream::connect(addr).await.unwrap();
         let mut buf = Vec::new();
@@ -411,12 +434,12 @@ mod tests {
         server.abort();
     }
 
-    // The M11a acceptance: drive the real receiver core against the real
-    // `serve_proto` sender over loopback and assert the handshake, the
-    // full-quality first paint, keep-newest, and — via an ack-gated sink that
+    // Drive the real receiver core against the real sender over loopback and
+    // assert the handshake, full-quality first paint, keep-newest, and — via
+    // an ack-gated sink that
     // delays each `Ready` — that only one update is ever in flight.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn recv_core_pull_pacing_over_serve_proto() {
+    async fn recv_core_pull_pacing_over_transport() {
         use papercast_recv_core::{FrameSink, FrameView};
         use std::sync::mpsc as std_mpsc;
 
@@ -464,8 +487,8 @@ mod tests {
         let (_settings_tx, settings_rx) = watch::channel(base);
         let (_refresh_tx, refresh_rx) = mpsc::channel::<()>(8);
 
-        let cfg = ProtoConfig { framebuffer: (4, 3), mode_state: state };
-        let server = tokio::spawn(serve_proto(listener, cfg, frames_rx, settings_rx, refresh_rx));
+        let cfg = Config { framebuffer: (4, 3), mode_state: state };
+        let server = tokio::spawn(serve_listener(listener, cfg, frames_rx, settings_rx, refresh_rx));
 
         let (out_tx, out_rx) = std_mpsc::channel();
         let (ack_tx, ack_rx) = std_mpsc::channel();

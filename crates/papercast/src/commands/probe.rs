@@ -1,4 +1,4 @@
-use papercast_capture::probe::{self, CaptureTier};
+use papercast_capture::probe;
 
 pub fn run() -> anyhow::Result<()> {
     let report = probe::run()?;
@@ -18,35 +18,37 @@ pub fn run() -> anyhow::Result<()> {
     }
 
     println!("\n== Capture protocol support ==");
-    let tier_line = |tier, label: &str, detail: String| {
-        let mark = if report.supported_tiers().contains(&tier) { "✔" } else { "✘" };
-        println!("  {mark} {label}: {detail}");
-    };
-    tier_line(
-        CaptureTier::ExtImageCopyCapture,
-        "ext-image-copy-capture-v1 (standard, preferred)",
-        format!(
-            "manager={:?} output-source={:?} toplevel-source={:?}",
-            report.global_version("ext_image_copy_capture_manager_v1"),
-            report.global_version("ext_output_image_capture_source_manager_v1"),
-            report.global_version("ext_foreign_toplevel_image_capture_source_manager_v1"),
-        ),
+    let supports_capture = report.supports_capture();
+    let has_cosmic = report.has_cosmic_screencopy();
+    let has_wlr = report.has_wlr_screencopy();
+    let ext_mark = if supports_capture { "✔" } else { "✘" };
+    let ext_detail = format!(
+        "manager={:?} output-source={:?} toplevel-source={:?}",
+        report.global_version("ext_image_copy_capture_manager_v1"),
+        report.global_version("ext_output_image_capture_source_manager_v1"),
+        report.global_version("ext_foreign_toplevel_image_capture_source_manager_v1"),
     );
-    tier_line(
-        CaptureTier::CosmicScreencopy,
-        "COSMIC zcosmic screencopy",
-        report
-            .globals
-            .iter()
-            .filter(|g| g.interface.starts_with("zcosmic_screencopy"))
-            .map(|g| format!("{} v{}", g.interface, g.version))
-            .collect::<Vec<_>>()
-            .join(", "),
+    println!(
+        "  {ext_mark} ext-image-copy-capture-v1 (standard, preferred): {ext_detail}",
     );
-    tier_line(
-        CaptureTier::WlrScreencopy,
-        "wlr-screencopy (legacy wlroots)",
-        format!("{:?}", report.global_version("zwlr_screencopy_manager_v1")),
+    let cosmic = report
+        .globals
+        .iter()
+        .filter(|g| g.interface.starts_with("zcosmic_screencopy"))
+        .map(|g| format!("{} v{}", g.interface, g.version))
+        .collect::<Vec<_>>()
+        .join(", ");
+    println!(
+        "  {} COSMIC zcosmic screencopy: {}{}",
+        if has_cosmic { "•" } else { "✘" },
+        if cosmic.is_empty() { "not detected" } else { &cosmic },
+        if has_cosmic { " (detected, no PaperCast backend)" } else { "" },
+    );
+    println!(
+        "  {} wlr-screencopy (legacy wlroots): {:?}{}",
+        if has_wlr { "•" } else { "✘" },
+        report.global_version("zwlr_screencopy_manager_v1"),
+        if has_wlr { " (detected, no PaperCast backend)" } else { "" },
     );
 
     println!("\n  All capture-related globals seen:");
@@ -54,12 +56,13 @@ pub fn run() -> anyhow::Result<()> {
         println!("    {} v{}", g.interface, g.version);
     }
 
-    match report.best_tier() {
-        Some(tier) => println!("\n  → selected backend: {tier:?}"),
-        None => println!(
+    if supports_capture {
+        println!("\n  → selected backend: ext-image-copy-capture-v1");
+    } else {
+        println!(
             "\n  → no supported Wayland capture protocol found; \
              the portal/PipeWire fallback backend would be required"
-        ),
+        );
     }
 
     println!("\n== SHM formats ({}) ==", report.shm_formats.len());

@@ -1,7 +1,6 @@
-//! JNI bindings for the Kotlin shell (M11b). Gated behind the `android` feature
-//! so the host build and tests never pull `jni`. Nothing here runs on the host —
-//! it is compile-checked with `--features android` and cross-compiled with
-//! cargo-ndk; its first real execution is the M11b emulator run.
+//! JNI bindings for the Kotlin shell. Gated behind the `android` feature so the
+//! host build and tests never pull `jni`; cargo-ndk cross-compiles this module
+//! for the app's device and emulator ABIs.
 //!
 //! # Java contract
 //!

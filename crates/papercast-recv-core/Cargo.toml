@@ -5,9 +5,8 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 
-# `lib` for the host-side integration test and the future JNI wrapper; `cdylib`
-# so cargo-ndk can emit the `.so` the Kotlin shell loads. No JNI symbols are
-# exported yet — those land behind the `android` feature (see below).
+# `lib` supports host-side integration tests; `cdylib` lets cargo-ndk emit the
+# `.so` loaded by the Kotlin shell. JNI symbols are gated by `android`.
 [lib]
 crate-type = ["lib", "cdylib"]
 

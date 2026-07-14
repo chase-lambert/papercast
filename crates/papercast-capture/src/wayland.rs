@@ -9,11 +9,11 @@
 //! Protocol flow per session:
 //!   create_source(output) → create_session → session events (buffer_size,
 //!   shm_format…, done) → allocate one wl_shm buffer → per frame:
-//!   create_frame + attach_buffer + capture → damage*/ready events → copy out.
+//!   create_frame + attach_buffer + capture → ready event → copy out.
 //!
 //! The compositor delays `ready` until the screen actually changed, so an
-//! idle desktop produces no frames and no CPU load — ideal for e-ink. Damage
-//! rects ride along on each Frame for the dirty-tile pipeline.
+//! idle desktop produces no frames and no CPU load — ideal for e-ink. The
+//! processed output is diffed into tiles by each transport.
 
 use std::fs::File;
 use std::os::fd::AsFd;
@@ -21,7 +21,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{bail, Context};
 use memmap2::MmapMut;
-use papercast_core::{Frame, PixelFormat, Rect};
+use papercast_core::{Frame, PixelFormat};
 use tokio::sync::mpsc;
 use wayland_client::globals::{registry_queue_init, GlobalListContents};
 use wayland_client::protocol::{wl_buffer, wl_output, wl_registry, wl_shm, wl_shm_pool};
@@ -42,7 +42,7 @@ pub struct WaylandConfig {
     /// Output (monitor) name as shown by `papercast probe`, e.g. "eDP-1".
     /// `None` = first output.
     pub output: Option<String>,
-    /// Upper bound on capture rate; the real rate is damage-driven and
+    /// Upper bound on capture rate; the real rate is change-driven and
     /// usually lower. Used as the fixed rate when `fps_rx` is `None`, and as
     /// the initial rate otherwise.
     pub max_fps: u32,
@@ -96,7 +96,6 @@ struct CaptureState {
     session_stopped: bool,
 
     // Current frame lifecycle.
-    damage: Vec<Rect>,
     frame_ready: bool,
     frame_failed: Option<FailureReason>,
 }
@@ -194,8 +193,8 @@ fn capture_thread(
                 announced_size = Some((width, height));
             }
             Some(prev) if prev != (width, height) => {
-                // The VNC framebuffer was sized from the first negotiation.
-                // Live resize needs fb.resize + client re-init: not yet built.
+                // The output transport's framebuffer was sized from the first
+                // negotiation. Live resize and client re-init are not supported.
                 bail!(
                     "capture size changed {prev:?} → {width}x{height}; \
                      restart papercast (live resize not supported yet)"
@@ -256,7 +255,6 @@ fn capture_thread(
                     }
                     other => {
                         tracing::warn!("frame failed ({other:?}); retrying");
-                        state.damage.clear();
                         frame = start_capture(&session, &buffer, &qh);
                     }
                 }
@@ -264,13 +262,11 @@ fn capture_thread(
             if state.frame_ready {
                 state.frame_ready = false;
 
-                let damage = std::mem::take(&mut state.damage);
                 let out = Frame {
                     width,
                     height,
                     format: frame_format,
                     data: mmap.to_vec(),
-                    damage: Some(damage),
                 };
                 if frame_tx.blocking_send(out).is_err() {
                     tracing::debug!("consumer dropped, ending capture");
@@ -280,7 +276,7 @@ fn capture_thread(
                 }
 
                 // Cap the capture rate: the compositor would happily hand us
-                // 120 fps of damage; e-ink has no use for it. The interval is
+                // 120 fps of changes; e-ink has no use for it. The interval is
                 // re-read here so a runtime mode switch takes effect at once.
                 let elapsed = last_send.elapsed();
                 let interval = frame_interval();
@@ -383,7 +379,7 @@ impl Dispatch<ExtImageCopyCaptureSessionV1, ()> for CaptureState {
             Event::ShmFormat { format: WEnum::Value(f) } => state.shm_formats.push(f),
             Event::Done => state.constraints_generation += 1,
             Event::Stopped => state.session_stopped = true,
-            _ => {} // dmabuf constraints (GPU path: Phase 2), unknown formats
+            _ => {} // dmabuf constraints and unknown formats are unused
         }
     }
 }
@@ -399,16 +395,6 @@ impl Dispatch<ExtImageCopyCaptureFrameV1, ()> for CaptureState {
     ) {
         use ext_image_copy_capture_frame_v1::Event;
         match event {
-            Event::Damage { x, y, width, height } => {
-                if width > 0 && height > 0 {
-                    state.damage.push(Rect::new(
-                        x.max(0) as u32,
-                        y.max(0) as u32,
-                        width as u32,
-                        height as u32,
-                    ));
-                }
-            }
             Event::Ready => state.frame_ready = true,
             Event::Failed { reason } => {
                 state.frame_failed = Some(match reason {
@@ -419,11 +405,11 @@ impl Dispatch<ExtImageCopyCaptureFrameV1, ()> for CaptureState {
             Event::Transform { transform: WEnum::Value(t) }
                 if t != wl_output::Transform::Normal =>
             {
-                // Damage coords would need transforming; flag loudly until
-                // M3's coordinate handling covers rotated outputs.
-                tracing::warn!("output transform {t:?} not yet handled; expect wrong damage");
+                tracing::warn!(
+                    "output transform {t:?} is not handled; captured pixels may be oriented incorrectly"
+                );
             }
-            _ => {} // presentation_time (latency work later), normal transform
+            _ => {} // damage, presentation time, and normal transforms are unused
         }
     }
 }

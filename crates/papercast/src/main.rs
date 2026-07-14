@@ -3,7 +3,7 @@ mod config;
 mod control;
 mod mode;
 mod pipeline_thread;
-mod transport;
+mod transports;
 
 use clap::{Parser, Subcommand};
 
@@ -22,7 +22,7 @@ enum Command {
     /// Inspect the Wayland compositor: globals, outputs, shm formats, and
     /// which screen-capture protocols are available.
     Probe,
-    /// Serve a frame source as a VNC session.
+    /// Mirror a frame source over VNC or the experimental native transport.
     Run(commands::run::RunArgs),
     /// Control a running `papercast run`: switch mode, force refresh, status.
     Ctl(commands::ctl::CtlArgs),

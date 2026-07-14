@@ -1,6 +1,6 @@
 [package]
 name = "papercast"
-description = "Mirror a Linux desktop to an e-ink tablet: capture, e-ink processing, VNC serving"
+description = "Mirror a Linux desktop to an e-ink tablet over VNC or the native PaperCast protocol"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -24,6 +24,5 @@ toml = "1.1.2"
 rustix = { version = "1.1.4", features = ["process"] }
 
 [dev-dependencies]
-# Drives the M11a receiver core against the real `serve_proto` sender path in the
-# transport integration test.
+# Drives the receiver core against the real native sender in integration tests.
 papercast-recv-core.workspace = true

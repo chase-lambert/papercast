@@ -1,21 +1,14 @@
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
 
 use anyhow::Context;
 use clap::{Args, ValueEnum};
 use papercast_core::dither::DitherMode;
 use papercast_core::scale::FitMode;
-use papercast_core::tiles::TileDiff;
-use papercast_core::Rect;
 
 use crate::control;
 use crate::mode::{ModeSettings, ModeState};
-// Note: the crate re-exports `events::ServerEvent`, but `VncServer::new`'s
-// receiver actually carries `server::ServerEvent` — a different enum.
-use rustvncserver::server::ServerEvent;
-use rustvncserver::VncServer;
-use tracing::{error, info, warn};
+use tracing::{info, warn};
 
 use crate::config;
 
@@ -37,9 +30,9 @@ pub struct RunArgs {
     #[arg(long)]
     pub config: Option<PathBuf>,
 
-    /// Address to serve VNC on [default: 127.0.0.1:5900]. Loopback because
-    /// the session is unauthenticated; the tablet reaches loopback via
-    /// `adb reverse`. Use 0.0.0.0:5900 only if you want LAN exposure.
+    /// Address to serve on. Defaults to 127.0.0.1:5900 for VNC and
+    /// 127.0.0.1:5920 for the experimental native transport. Both are
+    /// unauthenticated; use a non-loopback address only on a trusted network.
     #[arg(long)]
     pub listen: Option<String>,
 
@@ -47,7 +40,7 @@ pub struct RunArgs {
     #[arg(long, default_value = "1280x960", value_parser = parse_size)]
     pub size: (u32, u32),
 
-    /// Frame rate cap [default: 15]. The wayland source is damage-driven:
+    /// Frame rate cap [default: 15]. The Wayland source is change-driven:
     /// an idle screen produces no frames at all.
     #[arg(long)]
     pub fps: Option<u32>,
@@ -167,9 +160,10 @@ fn parse_size(s: &str) -> Result<(u32, u32), String> {
 
 /// Everything `serve` needs, after merging defaults, file, and CLI. The
 /// mode-switchable settings (eink, fps, tile, refresh) live inside `mode` as
-/// its *base*; `listen`/`output` are fixed for the process lifetime.
+/// its *base*; transport listeners and `output` are fixed for the process lifetime.
 struct Settings {
-    listen: String,
+    vnc_listen: String,
+    papercast_listen: String,
     output: Option<String>,
     mode: ModeState,
 }
@@ -228,14 +222,30 @@ fn resolve(args: &RunArgs) -> anyhow::Result<Settings> {
     let mode = ModeState::new(base, file.modes, active)?;
 
     Ok(Settings {
-        listen: args
-            .listen
-            .clone()
-            .or(m.listen)
-            .unwrap_or_else(|| "127.0.0.1:5900".into()),
+        vnc_listen: resolve_vnc_listen(args.listen.as_deref(), m.listen.as_deref()),
+        papercast_listen: resolve_papercast_listen(
+            args.listen.as_deref(),
+            m.listen.as_deref(),
+        ),
         output: args.output.clone().or(m.output),
         mode,
     })
+}
+
+fn resolve_vnc_listen(cli: Option<&str>, file: Option<&str>) -> String {
+    cli.or(file).unwrap_or("127.0.0.1:5900").to_string()
+}
+
+fn resolve_papercast_listen(cli: Option<&str>, _mirror_listen: Option<&str>) -> String {
+    cli.unwrap_or("127.0.0.1:5920").to_string()
+}
+
+fn validate_transport(transport: TransportArg, raw: bool) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        transport != TransportArg::Papercast || !raw,
+        "--transport papercast serves the e-ink pipeline; --raw is not supported yet"
+    );
+    Ok(())
 }
 
 pub fn run(args: RunArgs) -> anyhow::Result<()> {
@@ -246,7 +256,8 @@ pub fn run(args: RunArgs) -> anyhow::Result<()> {
 }
 
 async fn serve(args: RunArgs) -> anyhow::Result<()> {
-    let Settings { listen, output, mode } = resolve(&args)?;
+    validate_transport(args.transport, args.raw)?;
+    let Settings { vnc_listen, papercast_listen, output, mode } = resolve(&args)?;
     let effective = mode.effective();
     // One shared mode state, mutated by both the config watcher (base reload)
     // and the ctl server (set_mode) — never cloned, so the two can't diverge.
@@ -259,10 +270,10 @@ async fn serve(args: RunArgs) -> anyhow::Result<()> {
     //    binary's ModeSettings type. The source paces itself off this, so a
     //    runtime mode switch re-paces at the source — no serve-loop dropping,
     //    no wasted pipeline work, no fixed-fps-at-startup constraint.
-    let (settings_tx, mut settings_rx) = tokio::sync::watch::channel(effective.clone());
+    let (settings_tx, settings_rx) = tokio::sync::watch::channel(effective.clone());
     let (fps_tx, fps_rx) = tokio::sync::watch::channel(effective.fps);
     // `ctl refresh` → force one full redraw from the serve loop.
-    let (refresh_tx, mut refresh_rx) = tokio::sync::mpsc::channel::<()>(8);
+    let (refresh_tx, refresh_rx) = tokio::sync::mpsc::channel::<()>(8);
 
     let captured = match args.source {
         SourceKind::Test => {
@@ -278,7 +289,7 @@ async fn serve(args: RunArgs) -> anyhow::Result<()> {
         }
     };
 
-    let mut source = if args.raw {
+    let source = if args.raw {
         captured
     } else {
         crate::pipeline_thread::spawn(
@@ -321,202 +332,39 @@ async fn serve(args: RunArgs) -> anyhow::Result<()> {
         output: output.clone(),
     })?;
 
-    // Papercast custom transport: it shares all of the setup above and differs
-    // only in the output half, so it's handled as an early return — the VNC path
-    // below stays exactly as it was (it's the M9 baseline and the M11 fallback).
-    if args.transport == TransportArg::Papercast {
-        anyhow::ensure!(
-            !args.raw,
-            "--transport papercast serves the e-ink pipeline; --raw is not supported yet"
-        );
-        let addr = args.listen.clone().unwrap_or_else(|| "127.0.0.1:5920".into());
-        let tcp = tokio::net::TcpListener::bind(&addr)
-            .await
-            .with_context(|| format!("binding papercast transport on {addr}"))?;
-        info!(
-            "papercast transport on {addr} ({fb_w}x{fb_h}, {} fps) — bridge with `adb reverse tcp:5920 tcp:5920`",
-            effective.fps,
-        );
-        return tokio::select! {
-            r = crate::transport::serve_proto(
-                tcp,
-                crate::transport::ProtoConfig {
+    match args.transport {
+        TransportArg::Papercast => tokio::select! {
+            result = crate::transports::papercast::serve(
+                &papercast_listen,
+                crate::transports::papercast::Config {
                     framebuffer: (fb_w as u16, fb_h as u16),
                     mode_state: Arc::clone(&mode_state),
                 },
                 source.frames,
                 settings_rx,
                 refresh_rx,
-            ) => r,
+            ) => result,
             _ = shutdown_signal() => {
                 info!("shutting down");
                 Ok(())
             }
-        };
-    }
-
-    let (server, mut events) = VncServer::new(
-        fb_w as u16,
-        fb_h as u16,
-        "PaperCast".to_string(),
-        None, // no VNC auth: loopback-only by default, adb provides the tunnel
-    );
-    let server = Arc::new(server);
-
-    // Listener task: accepts clients forever. If the bind itself fails
-    // (port taken, bad address) we want the whole process to die loudly,
-    // not limp along serving nobody. `mut`: select! polls it via &mut.
-    let mut listener = {
-        let server = Arc::clone(&server);
-        let addr = listen.clone();
-        tokio::spawn(async move {
-            info!("VNC server listening on {addr}");
-            server.listen(addr.as_str()).await
-        })
-    };
-
-    // Event drain: Phase 0 is view-only, so pointer/key events are ignored;
-    // connects/disconnects are logged so you can see the tablet arrive.
-    tokio::spawn(async move {
-        while let Some(event) = events.recv().await {
-            match event {
-                ServerEvent::ClientConnected { client_id } => {
-                    info!("client #{client_id} connected");
-                }
-                ServerEvent::ClientDisconnected { client_id } => {
-                    info!("client #{client_id} disconnected");
-                }
-                _ => {} // input/clipboard: ignored in Phase 0
-            }
-        }
-    });
-
-    let active_mode = mode_state
-        .lock()
-        .expect("mode state poisoned")
-        .active()
-        .map(|m| format!("mode: {m}"))
-        .unwrap_or_else(|| "no mode".into());
-    info!(
-        "mirroring {fb_w}x{fb_h} @ {} fps ({active_mode}) — connect a VNC viewer to {listen}",
-        effective.fps,
-    );
-
-    // Serve-loop view of the effective settings, refreshed from the watch
-    // channel each iteration so a runtime mode switch changes tile/refresh
-    // live. The source paces itself (via `fps_tx`); the serve loop no longer
-    // drops frames.
-    let mut current = effective.clone();
-    let mut tiler = TileDiff::new(current.tile_size, 8);
-    let mut rgba = Vec::new();
-    let mut updates_since_full: u64 = 0;
-    let mut last_full = Instant::now();
-
-    loop {
-        tokio::select! {
-            // A mode switch or config edit changed the effective settings.
-            // Handled in its own arm so it applies even on an idle screen (no
-            // frames arriving). Rebuild the tiler on a tile-size change (its
-            // full-frame first diff doubles as the switch redraw); otherwise
-            // force one full refresh since levels/dither changed globally.
-            //
-            // Known limitation (Phase 1 backlog): on a *fully idle* screen this
-            // redraw resends the framebuffer's current pixels, which were
-            // processed under the *old* levels/dither — the new look only
-            // appears once the next damage-driven frame flows through the
-            // pipeline (any cursor movement triggers it). The fix is for the
-            // pipeline to cache the last raw frame and reprocess it on a
-            // settings change; deferred until it's worth the memory.
-            Ok(()) = settings_rx.changed() => {
-                let next = settings_rx.borrow_and_update().clone();
-                if next.tile_size != current.tile_size {
-                    tiler = TileDiff::new(next.tile_size, 8);
-                } else if next != current {
-                    server
-                        .framebuffer()
-                        .mark_dirty_region(0, 0, fb_w as u16, fb_h as u16)
-                        .await;
-                }
-                last_full = Instant::now();
-                updates_since_full = 0;
-                current = next;
-            }
-            // `ctl refresh`: force one full redraw now.
-            Some(()) = refresh_rx.recv() => {
-                server
-                    .framebuffer()
-                    .mark_dirty_region(0, 0, fb_w as u16, fb_h as u16)
-                    .await;
-                last_full = Instant::now();
-                updates_since_full = 0;
-                tracing::debug!("forced full refresh (ctl)");
-            }
-            maybe_frame = source.frames.recv() => {
-                let Some(frame) = maybe_frame else {
-                    warn!("frame source ended");
-                    return Ok(());
-                };
-
-                if args.raw {
-                    // Raw color path: let the server's own full-frame diff
-                    // find the changed bounding box.
-                    papercast_core::pixel::frame_to_rgba(&frame, &mut rgba);
-                    if let Err(e) = server.framebuffer().update_from_slice(&rgba).await {
-                        error!("framebuffer update failed: {e}");
-                    }
-                    continue;
-                }
-
-                // Processed gray path: send exactly the tiles that changed.
-                let rects = tiler.diff(&frame.data, (frame.width, frame.height));
-                for rect in &rects {
-                    extract_rect_rgba(&frame.data, fb_w, *rect, &mut rgba);
-                    if let Err(e) = server
-                        .framebuffer()
-                        .update_cropped(
-                            &rgba,
-                            rect.x as u16,
-                            rect.y as u16,
-                            rect.width as u16,
-                            rect.height as u16,
-                        )
-                        .await
-                    {
-                        error!("cropped update failed: {e}");
-                    }
-                }
-                if !rects.is_empty() {
-                    updates_since_full += 1;
-                }
-
-                // Ghost-clearing: periodically force clients to redraw the
-                // whole frame even though pixel data didn't change. On the
-                // tablet this gives the EPD a chance to do a clean settle.
-                let due_time = current.full_refresh_secs > 0
-                    && last_full.elapsed().as_secs() >= current.full_refresh_secs;
-                let due_count = current.full_refresh_updates > 0
-                    && updates_since_full >= current.full_refresh_updates;
-                if due_time || due_count {
-                    server
-                        .framebuffer()
-                        .mark_dirty_region(0, 0, fb_w as u16, fb_h as u16)
-                        .await;
-                    last_full = Instant::now();
-                    updates_since_full = 0;
-                    tracing::debug!("forced full refresh");
-                }
-            }
-            listen_result = &mut listener => {
-                match listen_result {
-                    Ok(Err(e)) => anyhow::bail!("VNC listener failed: {e}"),
-                    Ok(Ok(())) => anyhow::bail!("VNC listener exited unexpectedly"),
-                    Err(e) => anyhow::bail!("VNC listener task panicked: {e}"),
-                }
-            }
-            // Clean shutdown so the socket guard runs and unlinks the socket.
+        },
+        TransportArg::Vnc => tokio::select! {
+            result = crate::transports::vnc::serve(
+                crate::transports::vnc::Config {
+                    listen: vnc_listen,
+                    framebuffer: (fb_w as u16, fb_h as u16),
+                    raw: args.raw,
+                    effective,
+                    mode_state: Arc::clone(&mode_state),
+                },
+                source.frames,
+                settings_rx,
+                refresh_rx,
+            ) => result,
             _ = shutdown_signal() => {
                 info!("shutting down");
-                return Ok(());
+                Ok(())
             }
         }
     }
@@ -537,19 +385,6 @@ async fn shutdown_signal() {
     tokio::select! {
         _ = tokio::signal::ctrl_c() => {}
         _ = term.recv() => {}
-    }
-}
-
-/// Copy a sub-rectangle of a gray frame into a contiguous RGBA buffer
-/// (the layout `update_cropped` expects).
-fn extract_rect_rgba(gray: &[u8], stride: u32, rect: Rect, out: &mut Vec<u8>) {
-    out.clear();
-    out.reserve(rect.width as usize * rect.height as usize * 4);
-    for y in rect.y..rect.y + rect.height {
-        let row_start = (y * stride + rect.x) as usize;
-        for &g in &gray[row_start..row_start + rect.width as usize] {
-            out.extend_from_slice(&[g, g, g, 255]);
-        }
     }
 }
 
@@ -632,4 +467,39 @@ fn spawn_config_watcher(
             }
         })
         .expect("failed to spawn config watcher");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn vnc_listen_uses_cli_then_file_then_default() {
+        assert_eq!(
+            resolve_vnc_listen(Some("0.0.0.0:6000"), Some("127.0.0.1:5901")),
+            "0.0.0.0:6000"
+        );
+        assert_eq!(resolve_vnc_listen(None, Some("127.0.0.1:5901")), "127.0.0.1:5901");
+        assert_eq!(resolve_vnc_listen(None, None), "127.0.0.1:5900");
+    }
+
+    #[test]
+    fn papercast_listen_uses_only_cli_or_native_default() {
+        assert_eq!(
+            resolve_papercast_listen(Some("127.0.0.1:6000"), Some("127.0.0.1:5901")),
+            "127.0.0.1:6000"
+        );
+        assert_eq!(
+            resolve_papercast_listen(None, Some("127.0.0.1:5901")),
+            "127.0.0.1:5920"
+        );
+        assert_eq!(resolve_papercast_listen(None, None), "127.0.0.1:5920");
+    }
+
+    #[test]
+    fn papercast_transport_rejects_raw_frames() {
+        assert!(validate_transport(TransportArg::Papercast, true).is_err());
+        assert!(validate_transport(TransportArg::Papercast, false).is_ok());
+        assert!(validate_transport(TransportArg::Vnc, true).is_ok());
+    }
 }

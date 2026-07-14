@@ -25,7 +25,7 @@ papercast-core = { path = "crates/papercast-core" }
 papercast-capture = { path = "crates/papercast-capture" }
 papercast-proto = { path = "crates/papercast-proto" }
 papercast-recv-core = { path = "crates/papercast-recv-core" }
-# Vendored with a one-line patch for loopback-only binding; see vendor/rustvncserver/VENDORED.md
+# Vendored with three local patches; see vendor/rustvncserver/VENDORED.md.
 rustvncserver = { path = "vendor/rustvncserver" }
 anyhow = "1"
 thiserror = "2"

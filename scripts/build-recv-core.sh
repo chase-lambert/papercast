@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Cross-compile papercast-recv-core for Android and drop the .so's where the
-# Kotlin shell (M11b) packages them: android/app/src/main/jniLibs/<abi>/.
+# Kotlin shell packages them: android/app/src/main/jniLibs/<abi>/.
 #
-# Prerequisites (see the "Native Android receiver" section in README.md):
+# Prerequisites (see "Experimental native receiver" in README.md):
 #   - rustup targets aarch64-linux-android + x86_64-linux-android
 #   - cargo-ndk (cargo install cargo-ndk)
 #   - an Android NDK, with ANDROID_NDK_HOME pointing at it

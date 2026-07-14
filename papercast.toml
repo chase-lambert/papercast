@@ -22,3 +22,12 @@ fps = 15
 tile-size = 64          # dirty-diff granularity
 full-refresh-secs = 60  # periodic ghost-clearing refresh; 0 = off
 full-refresh-updates = 0 # ...or after N incremental updates; 0 = off
+# mode = "browsing"     # startup mode; reading | browsing | writing | video
+
+# A mode table overrides a built-in when its name matches, or defines a custom
+# mode under a new name. It accepts [eink] keys except target-size, plus fps,
+# tile-size, full-refresh-secs, and full-refresh-updates.
+# [modes.proofing]
+# levels = 2
+# sharpen = 2.0
+# fps = 4
